@@ -86,7 +86,7 @@ jobs:
           cache: true
       # The latest dev dependencies require a newer SDK, but users of the
       # package never resolve them.
-      - run: flutter pub remove leancode_lint ffigen
+      - run: flutter pub remove --no-example leancode_lint ffigen
       - run: flutter test
 
   test-web:
@@ -120,6 +120,11 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Free disk space for the emulator
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/share/boost /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/swift
+          df -h /
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -136,6 +141,7 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
+          disk-size: 4096M
           disable-animations: true
           working-directory: example
           script: flutter test integration_test -d emulator-5554

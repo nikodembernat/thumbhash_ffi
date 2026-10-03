@@ -13,6 +13,13 @@
 #include <stdbool.h>
 #include <stdlib.h>
 
+// Do not fuse multiplications and additions into FMA instructions (which
+// clang does by default on ARM): the reference implementation rounds after
+// every operation, and so should results on every platform.
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#endif
+
 #define THUMBHASH_PI 3.14159265358979323846f
 
 // The largest number of DCT components along a single axis.

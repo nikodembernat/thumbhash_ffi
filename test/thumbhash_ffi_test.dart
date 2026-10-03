@@ -20,11 +20,11 @@ typedef _Codec = ({
 /// How many hash values may be off by one compared to the reference.
 ///
 /// The C implementation uses single precision floats like the reference, but
-/// sums in a different order. The Dart implementation uses double precision:
+/// sums in a different order, and `cosf` differs slightly between platforms. The Dart implementation uses double precision:
 /// degenerate images (e.g. 1 pixel wide) have many coefficients that are
 /// exactly 0.5 after normalization, where the rounding direction depends on
 /// the sign of the floating point error of `cos(pi / 2)`.
-const _maxSinglePrecisionDifferences = 4;
+const _maxSinglePrecisionDifferences = 6;
 const _maxDoublePrecisionDifferences = 16;
 
 void main() {
