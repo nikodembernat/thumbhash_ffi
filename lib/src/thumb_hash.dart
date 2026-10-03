@@ -128,7 +128,7 @@ final class ThumbHash {
     final scaled = image.width > maxEncodeSize || image.height > maxEncodeSize
         ? await _downscale(image)
         : null;
-    final source = scaled ?? image;
+    final source = scaled?.image ?? image;
     try {
       final data = await source.toByteData(
         format: ui.ImageByteFormat.rawStraightRgba,
@@ -143,7 +143,9 @@ final class ThumbHash {
         data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
       );
     } finally {
-      scaled?.dispose();
+      // On the web, the image may reference the picture until it is gone.
+      scaled?.image.dispose();
+      scaled?.picture.dispose();
     }
   }
 
@@ -273,7 +275,12 @@ Future<ui.Image> _resolve(ImageProvider imageProvider) {
   return completer.future;
 }
 
-Future<ui.Image> _downscale(ui.Image image) async {
+/// Draws [image] scaled down to fit [ThumbHash.maxEncodeSize].
+///
+/// The caller must dispose both the image and the picture it is drawn from.
+Future<({ui.Image image, ui.Picture picture})> _downscale(
+  ui.Image image,
+) async {
   final scale = ThumbHash.maxEncodeSize / math.max(image.width, image.height);
   final width = math.max(1, (image.width * scale).round());
   final height = math.max(1, (image.height * scale).round());
@@ -287,8 +294,9 @@ Future<ui.Image> _downscale(ui.Image image) async {
   );
   final picture = recorder.endRecording();
   try {
-    return await picture.toImage(width, height);
-  } finally {
+    return (image: await picture.toImage(width, height), picture: picture);
+  } catch (_) {
     picture.dispose();
+    rethrow;
   }
 }

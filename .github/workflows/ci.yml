@@ -178,14 +178,30 @@ jobs:
       - name: Build release app
         run: flutter build ios --release --no-codesign
         working-directory: example
-      - name: Run integration tests
-        working-directory: example
+      - name: Boot simulator
+        id: simulator
         run: |
           UDID=$(xcrun simctl list devices available --json \
             | jq -r '[.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.name | startswith("iPhone"))] | last | .udid')
           echo "Using simulator $UDID"
-          xcrun simctl boot "$UDID"
-          flutter test integration_test -d "$UDID"
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          # Boots the simulator and waits until it has finished booting.
+          xcrun simctl bootstatus "$UDID" -b
+      - name: Run integration tests
+        working-directory: example
+        timeout-minutes: 20
+        run: flutter test integration_test -d "${{ steps.simulator.outputs.udid }}"
+      - name: Collect simulator logs
+        if: failure() || cancelled()
+        run: |
+          xcrun simctl spawn "${{ steps.simulator.outputs.udid }}" log show \
+            --last 30m --style compact \
+            --predicate 'process == "Runner" OR eventMessage CONTAINS "Runner"' \
+            | tail -n 400 || true
+          ls -la ~/Library/Logs/DiagnosticReports || true
+          for f in ~/Library/Logs/DiagnosticReports/Runner*; do
+            [ -f "$f" ] && head -n 120 "$f"
+          done
       - name: Check that CocoaPods is not used
         run: test ! -e example/ios/Podfile
 
