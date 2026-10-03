@@ -1,0 +1,27 @@
+# Regenerate the bindings with `dart run ffigen --config ffigen.yaml`.
+name: ThumbhashFfiBindings
+description: Bindings for `src/thumbhash_ffi.h`.
+output: lib/src/ffi/thumbhash_ffi_bindings.g.dart
+headers:
+  entry-points:
+    - src/thumbhash_ffi.h
+  include-directives:
+    - src/thumbhash_ffi.h
+ffi-native:
+functions:
+  include:
+    - thumbhash_.*
+  leaf:
+    include:
+      - thumbhash_.*
+macros:
+  include:
+    - THUMBHASH_.*
+  exclude:
+    - THUMBHASH_EXPORT
+    - THUMBHASH_FFI_H_
+preamble: |
+  // ignore_for_file: type=lint
+comments:
+  style: any
+  length: full

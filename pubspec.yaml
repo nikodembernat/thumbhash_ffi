@@ -1,0 +1,30 @@
+name: thumbhash_ffi
+description: >-
+  Fast ThumbHash image placeholder encoder and decoder for Flutter, written in
+  C and bound with dart:ffi through build hooks. Pure Dart fallback on the web.
+version: 1.0.0
+repository: https://github.com/nikodembernat/thumbhash_ffi
+issue_tracker: https://github.com/nikodembernat/thumbhash_ffi/issues
+topics:
+  - thumbhash
+  - ffi
+  - image
+  - placeholder
+  - blurhash
+
+environment:
+  sdk: ^3.10.0
+  flutter: '>=3.38.0'
+
+dependencies:
+  code_assets: '>=1.0.0 <3.0.0'
+  flutter:
+    sdk: flutter
+  hooks: '>=1.0.0 <3.0.0'
+  native_toolchain_c: '>=0.17.0 <0.20.0'
+
+dev_dependencies:
+  ffigen: ^22.0.0
+  flutter_test:
+    sdk: flutter
+  leancode_lint: ^27.0.0

@@ -1,0 +1,10 @@
+[package]
+name = "thumbhash_reference_generator"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+thumbhash = "=0.1.0"

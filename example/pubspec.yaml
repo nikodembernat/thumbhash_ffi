@@ -1,0 +1,26 @@
+name: thumbhash_ffi_example
+description: Demonstrates how to use the thumbhash_ffi package.
+publish_to: none
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  thumbhash_ffi:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+  leancode_lint: ^27.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/
