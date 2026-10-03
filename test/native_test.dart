@@ -8,14 +8,13 @@ import 'src/c_constants.dart';
 
 void main() {
   test('uses the native codec', () {
-    expect(ThumbhashFFI.isNative, isTrue);
+    expect(ThumbHash.isNative, isTrue);
   });
 
-  test('Dart constants match the C header', () {
+  test('Dart constants match the Rust crate', () {
     expect(cConstants, (
-      maxHashLength: ThumbhashFFI.maxHashLength,
-      maxEncodeSize: ThumbhashFFI.maxEncodeSize,
-      maxDecodeSize: ThumbhashFFI.maxDecodeSize,
+      maxHashLength: ThumbHash.maxLength,
+      maxEncodeSize: ThumbHash.maxEncodeSize,
     ));
   });
 }

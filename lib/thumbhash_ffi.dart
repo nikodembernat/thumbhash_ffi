@@ -1,24 +1,22 @@
-/// Fast ThumbHash image placeholder encoder and decoder for Flutter.
+/// ThumbHash image placeholders for Flutter.
 ///
-/// The codec is written in C and bound with `dart:ffi` through build hooks.
-/// On the web, an equivalent pure Dart implementation is used.
+/// * [ThumbHash] encodes images to hashes and decodes hashes.
+/// * [ThumbHashPlaceholder] shows a hash while an image loads.
+/// * [ThumbHashImage] is an [ImageProvider] that decodes a hash.
+/// * [ThumbHashPreviewImage] is an [ImageProvider] that shows the ThumbHash
+///   placeholder of another image.
 ///
-/// * [ThumbhashFFI] encodes images to hashes and decodes hashes to images.
-/// * [ThumbhashFfiImage] is an [ImageProvider] that decodes a hash.
-/// * [ThumbhashFfi] is a widget that shows a hash while an image loads.
-/// * [ThumbhashTheImage] is an [ImageProvider] that shows the ThumbHash of
-///   another image.
+/// Uses the reference Rust implementation through `dart:ffi`, and an
+/// equivalent Dart implementation on the web.
 library;
 
 import 'package:flutter/painting.dart';
-import 'package:thumbhash_ffi/src/thumbhash_ffi.dart';
-import 'package:thumbhash_ffi/src/widgets/thumbhash_ffi_image.dart';
-import 'package:thumbhash_ffi/src/widgets/thumbhash_ffi_widget.dart';
-import 'package:thumbhash_ffi/src/widgets/thumbhash_the_image.dart';
+import 'package:thumbhash_ffi/src/flutter/thumb_hash_image.dart';
+import 'package:thumbhash_ffi/src/flutter/thumb_hash_placeholder.dart';
+import 'package:thumbhash_ffi/src/flutter/thumb_hash_preview_image.dart';
+import 'package:thumbhash_ffi/src/thumb_hash.dart';
 
-export 'src/exception.dart';
-export 'src/thumbhash_ffi.dart';
-export 'src/thumbhash_rgba.dart';
-export 'src/widgets/thumbhash_ffi_image.dart';
-export 'src/widgets/thumbhash_ffi_widget.dart';
-export 'src/widgets/thumbhash_the_image.dart';
+export 'src/flutter/thumb_hash_image.dart';
+export 'src/flutter/thumb_hash_placeholder.dart';
+export 'src/flutter/thumb_hash_preview_image.dart';
+export 'src/thumb_hash.dart';

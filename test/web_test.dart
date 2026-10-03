@@ -6,6 +6,6 @@ import 'package:thumbhash_ffi/thumbhash_ffi.dart';
 
 void main() {
   test('uses the Dart codec', () {
-    expect(ThumbhashFFI.isNative, isFalse);
+    expect(ThumbHash.isNative, isFalse);
   });
 }

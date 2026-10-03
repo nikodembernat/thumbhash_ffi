@@ -1,42 +1,37 @@
-import 'dart:typed_data';
-
 import 'package:flutter/widgets.dart';
-import 'package:thumbhash_ffi/src/thumbhash_ffi.dart';
-import 'package:thumbhash_ffi/src/widgets/thumbhash_ffi_image.dart';
+import 'package:thumbhash_ffi/src/flutter/thumb_hash_image.dart';
+import 'package:thumbhash_ffi/src/thumb_hash.dart';
 
-/// Displays a ThumbHash placeholder and, optionally, cross-fades to the
-/// actual [image] once it has loaded.
+/// Shows the placeholder of a [ThumbHash] and, optionally, cross-fades to
+/// the actual [image] once it has loaded.
 ///
 /// ```dart
-/// ThumbhashFfi(
-///   hash: base64Decode('k0oGLQaSVsN0BVhX2oq2Z5SQUQcZ'),
-///   image: NetworkImage(url),
+/// AspectRatio(
+///   aspectRatio: hash.aspectRatio,
+///   child: ThumbHashPlaceholder(hash: hash, image: NetworkImage(url)),
 /// )
 /// ```
 ///
-/// The widget expands to fill its constraints, so give it a size, e.g. with
-/// a [SizedBox] or an [AspectRatio] (see [ThumbhashFFI.approximateAspectRatio]).
-/// The average color of the hash is shown until the placeholder is decoded.
-class ThumbhashFfi extends StatelessWidget {
-  /// Creates a widget that displays the ThumbHash [hash].
-  const ThumbhashFfi({
+/// The widget fills its constraints, so give it a size. The average color of
+/// the hash is shown until the placeholder is decoded.
+class ThumbHashPlaceholder extends StatelessWidget {
+  /// Creates a widget that shows [hash] until [image] has loaded.
+  const ThumbHashPlaceholder({
     super.key,
     required this.hash,
     this.image,
     this.fit = BoxFit.cover,
     this.alignment = Alignment.center,
-    this.decodingWidth,
-    this.decodingHeight,
     this.fadeDuration = const Duration(milliseconds: 300),
     this.fadeCurve = Curves.easeOut,
     this.errorBuilder,
     this.semanticLabel,
   });
 
-  /// The ThumbHash to display as a placeholder.
-  final Uint8List hash;
+  /// The hash of the placeholder.
+  final ThumbHash hash;
 
-  /// The image to fade in over the placeholder once it has loaded.
+  /// The image to show once it has loaded.
   final ImageProvider? image;
 
   /// How to inscribe the placeholder and the [image] into the layout.
@@ -45,19 +40,13 @@ class ThumbhashFfi extends StatelessWidget {
   /// How to align the placeholder and the [image] within the layout.
   final AlignmentGeometry alignment;
 
-  /// The width of the decoded placeholder, see [ThumbhashFFI.decode].
-  final int? decodingWidth;
-
-  /// The height of the decoded placeholder, see [ThumbhashFFI.decode].
-  final int? decodingHeight;
-
   /// How long the cross-fade from the placeholder to the [image] lasts.
   final Duration fadeDuration;
 
   /// The curve of the cross-fade from the placeholder to the [image].
   final Curve fadeCurve;
 
-  /// Builds the widget shown instead of the [image] if it fails to load.
+  /// Builds the widget shown if the [image] fails to load.
   ///
   /// If null, the placeholder stays visible.
   final ImageErrorWidgetBuilder? errorBuilder;
@@ -68,22 +57,18 @@ class ThumbhashFfi extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final image = this.image;
-    final placeholder = ThumbhashFFI.isValid(hash)
-        ? ColoredBox(
-            color: ThumbhashFFI.averageColor(hash),
-            child: Image(
-              image: ThumbhashFfiImage(
-                hash,
-                decodingWidth: decodingWidth,
-                decodingHeight: decodingHeight,
-              ),
-              fit: fit,
-              alignment: alignment,
-              gaplessPlayback: true,
-              excludeFromSemantics: true,
-            ),
-          )
-        : const SizedBox.expand();
+    final placeholder = ColoredBox(
+      color: hash.averageColor,
+      child: Image(
+        image: ThumbHashImage(hash),
+        fit: fit,
+        alignment: alignment,
+        width: double.infinity,
+        height: double.infinity,
+        gaplessPlayback: true,
+        excludeFromSemantics: true,
+      ),
+    );
 
     return Semantics(
       image: true,

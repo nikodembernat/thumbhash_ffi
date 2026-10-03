@@ -32,3 +32,4 @@ migrate_working_dir/
 
 # Rust reference generator
 /tool/reference_generator/target/
+/rust/target/

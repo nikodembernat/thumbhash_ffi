@@ -6,65 +6,88 @@
 // ignore_for_file: unused_import, unused_element, deprecated_member_use_from_same_package
 import 'dart:ffi' as ffi;
 
-/// Decodes a ThumbHash to an RGBA image of an arbitrary size.
+/// Extracts the approximate aspect ratio (width / height) of the original
+/// image.
 ///
-/// The reference implementation renders placeholders whose larger side is
-/// 32px, see `thumbhash_decoded_size`. `width` and `height` must be in range
-/// [1, THUMBHASH_MAX_DECODE_SIZE] and `rgba` must have room for
-/// `width * height * 4` bytes. Unless `flags` contains
-/// THUMBHASH_DECODE_PREMULTIPLIED, RGB is not premultiplied by A.
+/// Returns the ratio, or a negative error code.
 ///
-/// Returns 0 on success, or a negative error code.
+/// # Safety
+///
+/// `hash` must point to `hash_length` readable bytes.
+@ffi.Native<ffi.Float Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>(isLeaf: true)
+external double thumbhash_approximate_aspect_ratio(
+  ffi.Pointer<ffi.Uint8> hash,
+  int hash_length,
+);
+
+/// Extracts the average color from a ThumbHash.
+///
+/// Writes red, green, blue and alpha, each in range [0, 1], to `rgba`. RGB is
+/// not premultiplied by A.
+///
+/// Returns THUMBHASH_OK, or a negative error code.
+///
+/// # Safety
+///
+/// `hash` must point to `hash_length` readable bytes and `rgba` to 4
+/// writable floats.
+@ffi.Native<
+  ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Pointer<ffi.Float>)
+>(isLeaf: true)
+external int thumbhash_average_rgba(
+  ffi.Pointer<ffi.Uint8> hash,
+  int hash_length,
+  ffi.Pointer<ffi.Float> rgba,
+);
+
+/// Decodes a ThumbHash to an RGBA image, whose larger side is 32 pixels.
+///
+/// Writes the pixels to `rgba`, row by row, and the size of the image to
+/// `size` (width, then height). RGB is premultiplied by A if `premultiplied`
+/// is true.
+///
+/// Returns THUMBHASH_OK, or a negative error code.
+///
+/// # Safety
+///
+/// `hash` must point to `hash_length` readable bytes, `rgba` to
+/// THUMBHASH_MAX_DECODED_LENGTH writable bytes and `size` to 2 writable
+/// integers.
 @ffi.Native<
   ffi.Int32 Function(
     ffi.Pointer<ffi.Uint8>,
-    ffi.Int32,
-    ffi.Int32,
-    ffi.Int32,
-    ffi.Uint32,
+    ffi.Size,
+    ffi.Bool,
     ffi.Pointer<ffi.Uint8>,
+    ffi.Pointer<ffi.Uint32>,
   )
 >(isLeaf: true)
 external int thumbhash_decode(
   ffi.Pointer<ffi.Uint8> hash,
   int hash_length,
-  int width,
-  int height,
-  int flags,
+  bool premultiplied,
   ffi.Pointer<ffi.Uint8> rgba,
-);
-
-/// Computes the size of the placeholder rendered by the reference
-/// implementation, based on the approximate aspect ratio stored in the hash.
-///
-/// Returns 0 on success, or a negative error code.
-@ffi.Native<
-  ffi.Int32 Function(
-    ffi.Pointer<ffi.Uint8>,
-    ffi.Int32,
-    ffi.Pointer<ffi.Int32>,
-    ffi.Pointer<ffi.Int32>,
-  )
->(isLeaf: true)
-external int thumbhash_decoded_size(
-  ffi.Pointer<ffi.Uint8> hash,
-  int hash_length,
-  ffi.Pointer<ffi.Int32> width,
-  ffi.Pointer<ffi.Int32> height,
+  ffi.Pointer<ffi.Uint32> size,
 );
 
 /// Encodes an RGBA image to a ThumbHash. RGB must not be premultiplied by A.
 ///
-/// `width` and `height` must be in range [1, THUMBHASH_MAX_ENCODE_SIZE].
-/// `rgba` holds the pixels row-by-row and must have `width * height * 4`
-/// bytes. `hash` must have room for THUMBHASH_MAX_HASH_LENGTH bytes.
+/// `width` and `height` must be in range [1, THUMBHASH_MAX_ENCODE_SIZE] and
+/// `rgba` must hold exactly `width * height * 4` bytes, row by row. `hash`
+/// must have room for THUMBHASH_MAX_HASH_LENGTH bytes.
 ///
 /// Returns the number of bytes written to `hash`, or a negative error code.
+///
+/// # Safety
+///
+/// `rgba` must point to `rgba_length` readable bytes and `hash` to
+/// THUMBHASH_MAX_HASH_LENGTH writable bytes.
 @ffi.Native<
   ffi.Int32 Function(
-    ffi.Int32,
-    ffi.Int32,
+    ffi.Uint32,
+    ffi.Uint32,
     ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
     ffi.Pointer<ffi.Uint8>,
   )
 >(isLeaf: true)
@@ -72,19 +95,20 @@ external int thumbhash_encode(
   int width,
   int height,
   ffi.Pointer<ffi.Uint8> rgba,
+  int rgba_length,
   ffi.Pointer<ffi.Uint8> hash,
 );
-
-const int THUMBHASH_DECODE_PREMULTIPLIED = 1;
 
 const int THUMBHASH_ERROR_INVALID_ARGUMENT = -1;
 
 const int THUMBHASH_ERROR_INVALID_HASH = -2;
 
-const int THUMBHASH_ERROR_OUT_OF_MEMORY = -3;
+const int THUMBHASH_ERROR_PANIC = -3;
 
-const int THUMBHASH_MAX_DECODE_SIZE = 4096;
+const int THUMBHASH_MAX_DECODED_LENGTH = 4096;
 
 const int THUMBHASH_MAX_ENCODE_SIZE = 100;
 
 const int THUMBHASH_MAX_HASH_LENGTH = 25;
+
+const int THUMBHASH_OK = 0;

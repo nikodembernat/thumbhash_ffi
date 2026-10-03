@@ -1,4 +1,23 @@
+# A .pubignore replaces the .gitignore of its directory, so it repeats it.
+
 # Development only.
 .github/
 tool/
 test/assets/
+
+# Build outputs.
+/build/
+/rust/target/
+.dart_tool/
+.flutter-plugins-dependencies
+/pubspec.lock
+/coverage/
+**/doc/api/
+
+# Editors and OS files.
+.DS_Store
+.idea/
+*.iml
+*.ipr
+*.iws
+*.log

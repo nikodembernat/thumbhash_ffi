@@ -2,32 +2,35 @@
 
 [![CI](https://github.com/nikodembernat/thumbhash_ffi/actions/workflows/ci.yml/badge.svg)](https://github.com/nikodembernat/thumbhash_ffi/actions/workflows/ci.yml)
 
-A fast [ThumbHash](https://evanw.github.io/thumbhash/) image placeholder
-encoder and decoder for Flutter, written in C and bound with `dart:ffi`.
+[ThumbHash](https://evanw.github.io/thumbhash/) image placeholders for
+Flutter, using the
+[reference Rust implementation](https://github.com/evanw/thumbhash/tree/main/rust)
+through `dart:ffi`.
 
-ThumbHash stores a very compact (at most 25 bytes) representation of an image
-that is rendered as a blurry placeholder while the actual image loads. Compared
-to [BlurHash](https://blurha.sh), it encodes more detail in the same space,
-preserves the aspect ratio and supports transparency.
-
-The API follows [`blurhash_ffi`](https://pub.dev/packages/blurhash_ffi), and
-the C code is a port of the
-[reference Rust implementation](https://github.com/evanw/thumbhash/tree/main/rust).
+A ThumbHash stores a very compact (at most 25 bytes) representation of an
+image that is rendered as a blurry placeholder while the actual image loads.
+Compared to [BlurHash](https://blurha.sh), it encodes more detail in the same
+space, preserves the aspect ratio and supports transparency.
 
 ## Features
 
 - Encode any `ImageProvider` (network, asset, file, memory) or `ui.Image`.
   Images are decoded by the engine straight to at most 100x100 pixels, so even
   huge photos are cheap to encode.
-- Decode to a `ui.Image`, to raw RGBA pixels, or directly in the widget tree
-  with `ThumbhashFfiImage` and `ThumbhashFfi`.
-- Render placeholders at any size, not just the 32px of the reference.
+- Show placeholders with the `ThumbHashPlaceholder` widget, which cross-fades
+  to the actual image, or the `ThumbHashImage` image provider.
 - Read the average color and the aspect ratio of a hash without decoding it.
 - Supports Android, iOS, Linux, macOS, Windows and the web. On the web, where
   `dart:ffi` is not available, an equivalent pure Dart implementation is used.
 - Built with [build hooks](https://docs.flutter.dev/platform-integration/bind-native-code):
   no platform-specific build files, no CocoaPods, and nothing to set up in
-  your app.
+  your app besides Rust.
+
+## Requirements
+
+The Rust crate is compiled when your app is built, so
+[install rustup](https://rustup.rs). The pinned Rust version and the targets
+for all platforms are installed automatically on the first build.
 
 ## Usage
 
@@ -39,118 +42,137 @@ dependencies:
 ### Encoding
 
 Compute the hash when an image is uploaded and store it next to the image,
-usually as a base64 string:
+usually as base64:
 
 ```dart
-import 'dart:convert';
-
 import 'package:thumbhash_ffi/thumbhash_ffi.dart';
 
-final Uint8List hash = await ThumbhashFFI.encode(
-  const NetworkImage('https://example.com/photo.jpg'),
-);
-final String stored = base64Encode(hash); // e.g. k0oGLQaSVsN0BVhX2oq2Z5SQUQcZ
+final hash = await ThumbHash.encode(FileImage(file));
+final String stored = hash.toBase64(); // e.g. k0oGLQaSVsN0BVhX2oq2Z5SQUQcZ
 ```
 
-If you already have the pixels, encode them synchronously (at most 100x100
-pixels, RGBA, not premultiplied):
+If you already have the pixels (RGBA, not premultiplied, at most 100x100),
+encode them synchronously:
 
 ```dart
-final Uint8List hash = ThumbhashFFI.encodeRgba(width, height, rgba);
+final hash = ThumbHash.encodeRgba(width, height, rgba);
 ```
 
 ### Displaying placeholders
 
-The `ThumbhashFfi` widget shows the placeholder and cross-fades to the image
-once it has loaded:
-
 ```dart
+final hash = ThumbHash.fromBase64(stored);
+
 AspectRatio(
-  aspectRatio: ThumbhashFFI.approximateAspectRatio(hash),
-  child: ThumbhashFfi(
+  aspectRatio: hash.aspectRatio,
+  child: ThumbHashPlaceholder(
     hash: hash,
-    image: const NetworkImage('https://example.com/photo.jpg'),
+    image: NetworkImage('https://example.com/photo.jpg'),
   ),
 )
 ```
 
-`ThumbhashFfiImage` is an `ImageProvider`, so it works anywhere an image does,
+`ThumbHashPlaceholder` shows the average color of the hash, then the decoded
+placeholder, then cross-fades to the image once it has loaded. If the image
+fails to load, the placeholder stays (or pass an `errorBuilder`).
+
+`ThumbHashImage` is an `ImageProvider`, so it works anywhere an image does,
 for example as the placeholder of a `FadeInImage`:
 
 ```dart
 FadeInImage(
-  placeholder: ThumbhashFfiImage.fromBase64('k0oGLQaSVsN0BVhX2oq2Z5SQUQcZ'),
-  image: const NetworkImage('https://example.com/photo.jpg'),
+  placeholder: ThumbHashImage(hash),
+  image: NetworkImage('https://example.com/photo.jpg'),
   fit: BoxFit.cover,
 )
 ```
 
-To see what the placeholder of any image looks like, `ThumbhashTheImage`
-encodes and decodes it in one step:
+To see what the placeholder of any image looks like,
+`ThumbHashPreviewImage` encodes and decodes it in one step:
 
 ```dart
-Image(image: ThumbhashTheImage(const AssetImage('assets/photo.jpg')))
+Image(image: ThumbHashPreviewImage(AssetImage('assets/photo.jpg')))
 ```
 
-### Decoding
+### Decoding and inspecting
 
 ```dart
-// A ui.Image, 32px on the larger side by default.
-final ui.Image image = await ThumbhashFFI.decode(hash);
+final ui.Image image = await hash.toImage();      // 32px on the larger side
+final ThumbHashPixels pixels = hash.toPixels();   // raw RGBA, synchronously
 
-// Or at any size, e.g. to avoid upscaling artifacts on large placeholders.
-final ui.Image large = await ThumbhashFFI.decode(hash, width: 256);
-
-// Raw RGBA pixels, synchronously.
-final ThumbhashRgba pixels = ThumbhashFFI.decodeRgba(hash);
-
-// Cheap, without decoding.
-final Color color = ThumbhashFFI.averageColor(hash);
-final double aspectRatio = ThumbhashFFI.approximateAspectRatio(hash);
-final bool valid = ThumbhashFFI.isValid(hash);
+final Color color = hash.averageColor;            // no decoding needed
+final double aspectRatio = hash.aspectRatio;
+final bool transparent = hash.hasAlpha;
 ```
 
-Invalid hashes make the decoding methods throw a `ThumbhashFFIException`.
+`ThumbHash` is an immutable value: hashes with the same bytes are equal, so
+they make good keys and `ThumbHashImage`s are cached correctly. The
+constructors validate their input and throw a `FormatException` for malformed
+hashes; `ThumbHash.isValid` checks bytes without throwing.
 
-## Performance
+## Differences from blurhash_ffi
 
-Encoding a 100x100 image and decoding a placeholder take microseconds, so the
-synchronous methods are safe to call on the UI isolate. Decoding a placeholder
-larger than 256x256 pixels with `ThumbhashFFI.decode` runs on a background
-isolate.
+The API follows [`blurhash_ffi`](https://pub.dev/packages/blurhash_ffi), with
+these changes:
 
-Typed data is passed to C without copying, using leaf calls. Both the forward
-and the inverse DCT are evaluated separably with precomputed cosine tables.
+- **A `ThumbHash` value type instead of raw strings or bytes.** It is
+  validated once, when created, so decoding never fails, and it compares by
+  value. Its methods replace the static `BlurhashFFI.encode`/`decode`.
+- **Names that differ by more than case.** `BlurhashFFI` (the codec),
+  `BlurhashFfi` (the widget) and `BlurhashFfiImage` are now `ThumbHash`,
+  `ThumbHashPlaceholder` and `ThumbHashImage`. `BlurhashTheImage` is now
+  `ThumbHashPreviewImage`.
+- **The widget takes any `ImageProvider`** rather than a URL and HTTP headers,
+  and cross-fades so that the placeholder doesn't show through transparent
+  images.
+- **No decode size parameters.** A ThumbHash knows its aspect ratio, so the
+  placeholder is always decoded at the reference size and scaled by Flutter.
+- **Standard exceptions.** Malformed hashes throw a `FormatException`, invalid
+  arguments an `ArgumentError`, and image loading errors are forwarded as is,
+  rather than everything being wrapped in an `Error` subclass.
+- **No background isolate to manage.** Encoding a 100x100 image and decoding a
+  placeholder take microseconds, so there is no `free()` to call.
+- **No global logging configuration.**
+- **Correct colors for transparent images**: pixels are read without
+  premultiplied alpha, as ThumbHash expects.
+- **Images are downscaled before encoding.** Full-size images aren't encoded,
+  which would be slow without improving the result.
 
 ## How it works
 
-The C library (`src/thumbhash_ffi.c`) is compiled for the target platform by
-the build hook in `hook/build.dart` with
-[`native_toolchain_c`](https://pub.dev/packages/native_toolchain_c), and
-bundled with the app as a code asset. The Dart bindings in
+`rust/` contains a small crate that exposes the
+[`thumbhash`](https://crates.io/crates/thumbhash) crate through a C ABI. It
+validates its input and never lets a panic cross the FFI boundary. The build
+hook in `hook/build.dart` compiles the crate for the target platform with
+[`native_toolchain_rust`](https://pub.dev/packages/native_toolchain_rust) and
+bundles it with the app. The Dart bindings in
 `lib/src/ffi/thumbhash_ffi_bindings.g.dart` are generated by
-[`ffigen`](https://pub.dev/packages/ffigen) and resolved with `@Native`, so
-there is no platform-specific loading code. On iOS and macOS, the library is
-embedded as a framework by the Flutter tool, which works with Swift Package
-Manager and does not need CocoaPods.
+[`ffigen`](https://pub.dev/packages/ffigen) from the header that
+[`cbindgen`](https://github.com/mozilla/cbindgen) generates, and they are
+resolved with `@Native`, without any platform-specific loading code. Typed data
+is passed to the native code without copying, through leaf calls.
 
-Building for Android, iOS and macOS needs the usual toolchains (Android NDK,
-Xcode), building for Linux needs `clang`, and building for Windows needs
-Visual Studio with the C++ workload, all of which Flutter requires anyway.
+On iOS and macOS, the library is embedded as a framework by the Flutter tool,
+which works with Swift Package Manager and does not need CocoaPods.
 
 ## Development
 
 ```sh
-flutter test                   # native codec (built by the hook) and Dart codec
+flutter test                   # native (Rust) and Dart codecs
 flutter test --platform chrome # web codec
-dart run ffigen                # regenerate the bindings after changing the header
+
+cd rust && cargo test          # the C ABI of the Rust crate
+
+# After changing rust/src/lib.rs, regenerate the header and the bindings:
+(cd rust && cbindgen --config cbindgen.toml --output thumbhash_ffi.h)
+dart run ffigen
 
 cd example
 flutter test integration_test  # on a device, a simulator or the desktop
 ```
 
 The test fixtures in `test/src/reference_fixtures.dart` are generated with the
-upstream Rust implementation:
+`thumbhash` crate:
 
 ```sh
 cargo run --release --manifest-path tool/reference_generator/Cargo.toml \
@@ -161,6 +183,6 @@ cargo run --release --manifest-path tool/reference_generator/Cargo.toml \
 
 - [ThumbHash](https://github.com/evanw/thumbhash) by Evan Wallace (MIT).
 - [blurhash_ffi](https://pub.dev/packages/blurhash_ffi), whose API this
-  package mirrors.
+  package is based on.
 - The flower photo in `example/assets` and `test/assets` comes from the
   ThumbHash repository.

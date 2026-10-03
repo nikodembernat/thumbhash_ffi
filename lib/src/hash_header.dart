@@ -1,18 +1,17 @@
 import 'dart:typed_data';
 
-import 'package:thumbhash_ffi/src/exception.dart';
-
 /// The constants stored at the beginning of every ThumbHash.
 ///
-/// Mirrors `read_header` in `src/thumbhash_ffi.c`.
+/// Used to validate hashes on every platform, and by the pure Dart codec on
+/// the web.
 final class HashHeader {
   /// Parses the header of [hash].
   ///
-  /// Throws a [ThumbhashFFIException] if [hash] is malformed or shorter than
-  /// its header says it should be.
-  factory HashHeader.parse(Uint8List hash) {
+  /// Throws a [FormatException] if [hash] is malformed or shorter than its
+  /// header says it should be.
+  factory HashHeader.parse(List<int> hash) {
     if (hash.length < 5) {
-      throw _invalid(hash);
+      throw _invalid(hash, 'expected at least 5 bytes');
     }
 
     final header24 = hash[0] | (hash[1] << 8) | (hash[2] << 16);
@@ -21,7 +20,8 @@ final class HashHeader {
     final isLandscape = (header16 >> 15) != 0;
     final lMin = header16 & 7;
     if (lMin == 0) {
-      throw _invalid(hash);
+      // The reference implementation would decode an empty image.
+      throw _invalid(hash, 'no luminance components');
     }
 
     final lMax = hasAlpha ? 5 : 7;
@@ -33,7 +33,7 @@ final class HashHeader {
     final nibbles = acCount(lx, ly) + 2 * 5 + (hasAlpha ? 14 : 0);
     final length = acStart + (nibbles + 1) ~/ 2;
     if (hash.length < length) {
-      throw _invalid(hash);
+      throw _invalid(hash, 'expected $length bytes');
     }
 
     return HashHeader._(
@@ -50,6 +50,7 @@ final class HashHeader {
       lx: lx,
       ly: ly,
       acStart: acStart,
+      length: length,
     );
   }
 
@@ -67,17 +68,8 @@ final class HashHeader {
     required this.lx,
     required this.ly,
     required this.acStart,
+    required this.length,
   });
-
-  /// Returns whether [hash] is a well-formed ThumbHash.
-  static bool isValid(Uint8List hash) {
-    try {
-      HashHeader.parse(hash);
-      return true;
-    } on ThumbhashFFIException {
-      return false;
-    }
-  }
 
   /// The DC (average) luminance.
   final double lDc;
@@ -118,8 +110,11 @@ final class HashHeader {
   /// The index of the first byte with AC coefficients.
   final int acStart;
 
-  /// The size of the placeholder rendered by the reference implementation:
-  /// the larger side is 32px and the aspect ratio is preserved.
+  /// The number of meaningful bytes in the hash.
+  final int length;
+
+  /// The size of the decoded placeholder: the larger side is 32px and the
+  /// aspect ratio is preserved.
   ({int width, int height}) get decodedSize => aspectRatio > 1
       ? (width: 32, height: (32 / aspectRatio).round())
       : (width: (32 * aspectRatio).round(), height: 32);
@@ -139,8 +134,8 @@ final class HashHeader {
     );
   }
 
-  static ThumbhashFFIException _invalid(Uint8List hash) =>
-      ThumbhashFFIException('Invalid ThumbHash of ${hash.length} bytes.');
+  static FormatException _invalid(List<int> hash, String reason) =>
+      FormatException('Invalid ThumbHash of ${hash.length} bytes: $reason');
 }
 
 /// The number of AC coefficients in a channel with `nx` by `ny` components.
@@ -153,4 +148,16 @@ int acCount(int nx, int ny) {
   }
 
   return count;
+}
+
+/// Premultiplies the RGB of [rgba] by its alpha, rounding like the native
+/// implementation.
+void premultiply(Uint8List rgba) {
+  for (var i = 0; i < rgba.length; i += 4) {
+    final a = rgba[i + 3];
+    rgba
+      ..[i] = (rgba[i] * a + 127) ~/ 255
+      ..[i + 1] = (rgba[i + 1] * a + 127) ~/ 255
+      ..[i + 2] = (rgba[i + 2] * a + 127) ~/ 255;
+  }
 }

@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,80 +9,82 @@ import 'package:thumbhash_ffi_example/main.dart';
 /// implementation.
 const _flowerHash = 'k0oGLQaSVsN0BVhX2oq2Z5SQUQcZ';
 
+/// The hash of the decoded [_flowerHash] placeholder and the average color of
+/// [_flowerHash], computed by the reference implementation.
+const _flowerRoundTripHash = 'k0oGNQiSVqN2BnhnqYq3Z5SAUQcY';
+const _flowerAverageColor = Color.from(
+  alpha: 1,
+  red: 0.484127,
+  green: 0.34126982,
+  blue: 0.07936506,
+);
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  final reference = ThumbHash.fromBase64(_flowerHash);
+
   test('uses the native codec everywhere but on the web', () {
-    expect(ThumbhashFFI.isNative, !kIsWeb);
+    expect(ThumbHash.isNative, !kIsWeb);
   });
 
   test('encodes and decodes RGBA pixels', () {
-    final reference = base64Decode(_flowerHash);
-    final decoded = ThumbhashFFI.decodeRgba(reference);
-    expect((decoded.width, decoded.height), (23, 32));
+    final pixels = reference.toPixels();
+    expect((pixels.width, pixels.height), (23, 32));
 
-    final hash = ThumbhashFFI.encodeRgba(
-      decoded.width,
-      decoded.height,
-      decoded.rgba,
-    );
-    expect(ThumbhashFFI.isValid(hash), isTrue);
-    expect(ThumbhashFFI.approximateAspectRatio(hash), closeTo(5 / 7, 1e-6));
+    final hash = ThumbHash.encodeRgba(pixels.width, pixels.height, pixels.rgba);
+    expect(hash.aspectRatio, closeTo(5 / 7, 1e-6));
+  });
+
+  test('matches the reference implementation', () {
+    // The native codec is the reference implementation.
+    if (ThumbHash.isNative) {
+      final pixels = reference.toPixels();
+      expect(
+        ThumbHash.encodeRgba(pixels.width, pixels.height, pixels.rgba),
+        ThumbHash.fromBase64(_flowerRoundTripHash),
+      );
+    }
+    _expectColorClose(reference.averageColor, _flowerAverageColor);
   });
 
   test('encodes assets', () async {
     final hashes = {
       for (final asset in exampleAssets)
-        asset: await ThumbhashFFI.encode(AssetImage(asset)),
+        asset: await ThumbHash.encode(AssetImage(asset)),
     };
 
     for (final hash in hashes.values) {
-      expect(ThumbhashFFI.isValid(hash), isTrue);
-      expect(hash.length, lessThanOrEqualTo(ThumbhashFFI.maxHashLength));
+      expect(hash.bytes.length, lessThanOrEqualTo(ThumbHash.maxLength));
     }
 
     // Image decoders differ slightly between platforms, so the hash of the
     // JPEG photo may not exactly match the reference.
     final flower = hashes['assets/flower.jpg']!;
-    final reference = base64Decode(_flowerHash);
-    expect(
-      ThumbhashFFI.approximateAspectRatio(flower),
-      ThumbhashFFI.approximateAspectRatio(reference),
-    );
-    _expectColorClose(
-      ThumbhashFFI.averageColor(flower),
-      ThumbhashFFI.averageColor(reference),
-    );
+    expect(flower.aspectRatio, reference.aspectRatio);
+    _expectColorClose(flower.averageColor, reference.averageColor);
 
     // 16:9 landscape.
-    expect(
-      ThumbhashFFI.approximateAspectRatio(hashes['assets/sunset.png']!),
-      closeTo(16 / 9, 0.1),
-    );
+    expect(hashes['assets/sunset.png']!.aspectRatio, closeTo(16 / 9, 0.1));
 
     // The orb is surrounded by transparency.
-    final orb = ThumbhashFFI.averageColor(hashes['assets/orb.png']!);
-    expect(orb.a, inInclusiveRange(0.3, 0.8));
+    final orb = hashes['assets/orb.png']!;
+    expect(orb.hasAlpha, isTrue);
+    expect(orb.averageColor.a, inInclusiveRange(0.3, 0.8));
   });
 
   test('decodes to images', () async {
-    final hash = base64Decode(_flowerHash);
-
-    final small = await ThumbhashFFI.decode(hash);
-    expect((small.width, small.height), (23, 32));
-    small.dispose();
-
-    final large = await ThumbhashFFI.decode(hash, width: 700, height: 1000);
-    expect((large.width, large.height), (700, 1000));
-    final pixels = await large.toByteData();
-    expect(pixels!.lengthInBytes, 700 * 1000 * 4);
-    large.dispose();
+    final image = await reference.toImage();
+    expect((image.width, image.height), (23, 32));
+    final pixels = await image.toByteData();
+    expect(pixels!.lengthInBytes, 23 * 32 * 4);
+    image.dispose();
   });
 
   testWidgets('shows placeholders', (tester) async {
     await tester.pumpWidget(const ThumbhashExampleApp());
     expect(
-      find.text(ThumbhashFFI.isNative ? 'Native codec' : 'Dart codec'),
+      find.text(ThumbHash.isNative ? 'Native codec' : 'Dart codec'),
       findsOneWidget,
     );
 

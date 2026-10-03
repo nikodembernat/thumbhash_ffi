@@ -6,10 +6,14 @@ import 'package:thumbhash_ffi/src/hash_header.dart';
 /// Whether the codec is backed by native code.
 const isNativeCodec = false;
 
+/// The maximum number of bytes in a ThumbHash.
+const maxHashLength = 25;
+
 /// Encodes an RGBA image to a ThumbHash. The arguments must be validated.
 ///
-/// A pure Dart port of `thumbhash_encode` from `src/thumbhash_ffi.c`, used
-/// where `dart:ffi` is unavailable.
+/// A pure Dart port of `rgba_to_thumb_hash` from the reference
+/// implementation, used where `dart:ffi` is unavailable. Both the forward
+/// and the inverse DCT are evaluated separably, which is faster in Dart.
 Uint8List encodeRgba(int w, int h, Uint8List rgba) {
   final n = w * h;
 
@@ -109,18 +113,17 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
   return hash;
 }
 
-/// Decodes a ThumbHash to an RGBA image. The size must be validated.
+/// Decodes a valid ThumbHash to an RGBA image whose larger side is 32px.
 ///
-/// A pure Dart port of `thumbhash_decode` from `src/thumbhash_ffi.c`, used
-/// where `dart:ffi` is unavailable.
-Uint8List decodeRgba(
-  Uint8List hash,
-  int width,
-  int height, {
+/// A pure Dart port of `thumb_hash_to_rgba` from the reference
+/// implementation, used where `dart:ffi` is unavailable.
+({int width, int height, Uint8List rgba}) decodeRgba(
+  Uint8List hash, {
   required bool premultiplied,
 }) {
   final header = HashHeader.parse(hash);
   final HashHeader(:lx, :ly, :hasAlpha) = header;
+  final (:width, :height) = header.decodedSize;
 
   // Read the varying factors (boost saturation by 1.25x to compensate for
   // quantization).
@@ -201,18 +204,29 @@ Uint8List decodeRgba(
       final b = l - 2 / 3 * p;
       final r = (3 * l - b + q) / 2;
       final g = r - q;
-      final alpha = _clamp01(a);
-      final factor = premultiplied ? alpha * 255 : 255;
-      rgba[out] = (_clamp01(r) * factor).toInt();
-      rgba[out + 1] = (_clamp01(g) * factor).toInt();
-      rgba[out + 2] = (_clamp01(b) * factor).toInt();
-      rgba[out + 3] = (alpha * 255).toInt();
+      rgba[out] = (_clamp01(r) * 255).toInt();
+      rgba[out + 1] = (_clamp01(g) * 255).toInt();
+      rgba[out + 2] = (_clamp01(b) * 255).toInt();
+      rgba[out + 3] = (_clamp01(a) * 255).toInt();
       out += 4;
     }
   }
+  if (premultiplied) {
+    premultiply(rgba);
+  }
 
-  return rgba;
+  return (width: width, height: height, rgba: rgba);
 }
+
+/// Returns the average color of a valid ThumbHash as (red, green, blue,
+/// alpha) in range [0, 1].
+({double red, double green, double blue, double alpha}) averageRgba(
+  Uint8List hash,
+) => HashHeader.parse(hash).averageRgba;
+
+/// Returns the approximate aspect ratio of a valid ThumbHash.
+double approximateAspectRatio(Uint8List hash) =>
+    HashHeader.parse(hash).aspectRatio;
 
 typedef _EncodedChannel = ({double dc, double scale, List<double> ac});
 

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -46,7 +45,7 @@ class ExamplePage extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(
               child: Text(
-                ThumbhashFFI.isNative ? 'Native codec' : 'Dart codec',
+                ThumbHash.isNative ? 'Native codec' : 'Dart codec',
                 key: const Key('codec'),
               ),
             ),
@@ -85,7 +84,7 @@ class _ExampleCardState extends State<ExampleCard> {
 
   Future<_EncodeResult> _encode() async {
     final stopwatch = Stopwatch()..start();
-    final hash = await ThumbhashFFI.encode(AssetImage(widget.asset));
+    final hash = await ThumbHash.encode(AssetImage(widget.asset));
     return _EncodeResult(hash, stopwatch.elapsed);
   }
 
@@ -115,7 +114,7 @@ class _ExampleCardState extends State<ExampleCard> {
           }
 
           final hash = result.hash;
-          final aspectRatio = ThumbhashFFI.approximateAspectRatio(hash);
+          final aspectRatio = hash.aspectRatio;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -137,7 +136,7 @@ class _ExampleCardState extends State<ExampleCard> {
                         aspectRatio: aspectRatio,
                         child: Image(
                           key: Key('placeholder ${widget.asset}'),
-                          image: ThumbhashFfiImage(hash),
+                          image: ThumbHashImage(hash),
                           fit: BoxFit.cover,
                         ),
                       ),
@@ -148,7 +147,7 @@ class _ExampleCardState extends State<ExampleCard> {
                       label: 'Fade in',
                       child: AspectRatio(
                         aspectRatio: aspectRatio,
-                        child: ThumbhashFfi(
+                        child: ThumbHashPlaceholder(
                           key: ValueKey(_loadCount),
                           hash: hash,
                           image: _SlowImage(
@@ -164,19 +163,17 @@ class _ExampleCardState extends State<ExampleCard> {
               ),
               ListTile(
                 title: SelectableText(
-                  base64Encode(hash),
+                  hash.toBase64(),
                   key: Key('hash ${widget.asset}'),
                   style: textTheme.bodyMedium?.copyWith(
                     fontFamily: 'monospace',
                   ),
                 ),
                 subtitle: Text(
-                  '${hash.length} bytes, loaded and encoded in '
+                  '${hash.bytes.length} bytes, loaded and encoded in '
                   '${result.elapsed.inMilliseconds} ms',
                 ),
-                leading: CircleAvatar(
-                  backgroundColor: ThumbhashFFI.averageColor(hash),
-                ),
+                leading: CircleAvatar(backgroundColor: hash.averageColor),
                 trailing: IconButton(
                   tooltip: 'Replay',
                   icon: const Icon(Icons.replay),
@@ -194,7 +191,7 @@ class _ExampleCardState extends State<ExampleCard> {
 class _EncodeResult {
   const _EncodeResult(this.hash, this.elapsed);
 
-  final Uint8List hash;
+  final ThumbHash hash;
   final Duration elapsed;
 }
 

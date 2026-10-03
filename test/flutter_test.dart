@@ -10,9 +10,10 @@ import 'package:thumbhash_ffi/thumbhash_ffi.dart';
 import 'src/matchers.dart';
 import 'src/reference_fixtures.dart';
 
-final _flower = referenceFixtures.singleWhere((f) => f.name == 'flower');
-final _flowerHash = base64Decode(_flower.hashBase64);
-final _alphaHash = base64Decode(
+final _flower = ThumbHash.fromBase64(
+  referenceFixtures.singleWhere((f) => f.name == 'flower').hashBase64,
+);
+final _alpha = ThumbHash.fromBase64(
   referenceFixtures.singleWhere((f) => f.name == 'circle_alpha').hashBase64,
 );
 
@@ -35,8 +36,20 @@ Future<Uint8List> _readPixels(ui.Image image) async {
   return data!.buffer.asUint8List();
 }
 
+Future<Uint8List> _flowerPng() async {
+  final image = await _imageFromPixels(
+    base64Decode(flowerRgbaBase64),
+    flowerWidth,
+    flowerHeight,
+  );
+  final png = await image.toByteData(format: ui.ImageByteFormat.png);
+  image.dispose();
+
+  return png!.buffer.asUint8List();
+}
+
 void main() {
-  group('ThumbhashFFI', () {
+  group('ThumbHash', () {
     testWidgets('encodes a ui.Image', (tester) async {
       await tester.runAsync(() async {
         final image = await _imageFromPixels(
@@ -47,8 +60,8 @@ void main() {
         addTearDown(image.dispose);
 
         expectHashClose(
-          await ThumbhashFFI.encodeImage(image),
-          _flowerHash,
+          (await ThumbHash.encodeImage(image)).bytes,
+          _flower.bytes,
           maxDifferences: 16,
         );
       });
@@ -68,10 +81,9 @@ void main() {
         final image = await _imageFromPixels(rgba, width, height);
         addTearDown(image.dispose);
 
-        final hash = await ThumbhashFFI.encodeImage(image);
-        expect(ThumbhashFFI.isValid(hash), isTrue);
-        expect(ThumbhashFFI.approximateAspectRatio(hash), closeTo(1.6, 0.2));
-        final color = ThumbhashFFI.averageColor(hash);
+        final hash = await ThumbHash.encodeImage(image);
+        expect(hash.aspectRatio, closeTo(1.6, 0.2));
+        final color = hash.averageColor;
         expect(color.r, closeTo(200 / 255, 0.05));
         expect(color.g, closeTo(0.5, 0.05));
         expect(color.b, closeTo(40 / 255, 0.05));
@@ -81,128 +93,64 @@ void main() {
 
     testWidgets('encodes an ImageProvider', (tester) async {
       await tester.runAsync(() async {
-        final image = await _imageFromPixels(
-          base64Decode(flowerRgbaBase64),
-          flowerWidth,
-          flowerHeight,
-        );
-        final png = await image.toByteData(format: ui.ImageByteFormat.png);
-        image.dispose();
-
-        final hash = await ThumbhashFFI.encode(
-          MemoryImage(png!.buffer.asUint8List()),
-        );
-        expectHashClose(hash, _flowerHash, maxDifferences: 16);
+        final hash = await ThumbHash.encode(MemoryImage(await _flowerPng()));
+        expectHashClose(hash.bytes, _flower.bytes, maxDifferences: 16);
       });
     });
 
-    testWidgets('fails to encode a broken ImageProvider', (tester) async {
+    testWidgets('forwards the error of a broken ImageProvider', (tester) async {
       await tester.runAsync(() async {
         await expectLater(
-          ThumbhashFFI.encode(MemoryImage(Uint8List.fromList([1, 2, 3]))),
-          throwsA(isA<ThumbhashFFIException>()),
+          ThumbHash.encode(MemoryImage(Uint8List.fromList([1, 2, 3]))),
+          throwsException,
         );
       });
     });
 
     testWidgets('decodes to a ui.Image', (tester) async {
       await tester.runAsync(() async {
-        final image = await ThumbhashFFI.decode(_flowerHash);
-        addTearDown(image.dispose);
-        expect((image.width, image.height), (23, 32));
+        for (final hash in [_flower, _alpha]) {
+          final image = await hash.toImage();
+          addTearDown(image.dispose);
+          final pixels = hash.toPixels(premultiplied: true);
+          expect((image.width, image.height), (pixels.width, pixels.height));
 
-        // ui.Image pixels are premultiplied.
-        expectBytesClose(
-          await _readPixels(image),
-          ThumbhashFFI.decodeRgba(_flowerHash, premultiplied: true).rgba,
-        );
+          // ui.Image pixels are premultiplied.
+          expectBytesClose(await _readPixels(image), pixels.rgba);
+        }
       });
-    });
-
-    testWidgets('decodes a hash with alpha to a ui.Image', (tester) async {
-      await tester.runAsync(() async {
-        final image = await ThumbhashFFI.decode(_alphaHash);
-        addTearDown(image.dispose);
-
-        expectBytesClose(
-          await _readPixels(image),
-          ThumbhashFFI.decodeRgba(_alphaHash, premultiplied: true).rgba,
-        );
-      });
-    });
-
-    testWidgets('decodes large images in the background', (tester) async {
-      await tester.runAsync(() async {
-        final image = await ThumbhashFFI.decode(_flowerHash, width: 600);
-        addTearDown(image.dispose);
-        expect((image.width, image.height), (600, 840));
-        expectBytesClose(
-          await _readPixels(image),
-          ThumbhashFFI.decodeRgba(
-            _flowerHash,
-            width: 600,
-            premultiplied: true,
-          ).rgba,
-        );
-      });
-    });
-
-    test('fails to decode an invalid hash', () async {
-      await expectLater(
-        ThumbhashFFI.decode(Uint8List(3)),
-        throwsA(isA<ThumbhashFFIException>()),
-      );
     });
   });
 
-  group('ThumbhashFfiImage', () {
+  group('ThumbHashImage', () {
     test('compares hashes by value', () {
       expect(
-        ThumbhashFfiImage(_flowerHash),
-        ThumbhashFfiImage(Uint8List.fromList(_flowerHash)),
+        ThumbHashImage(_flower),
+        ThumbHashImage(ThumbHash.fromBytes(_flower.bytes)),
       );
       expect(
-        ThumbhashFfiImage(_flowerHash).hashCode,
-        ThumbhashFfiImage(Uint8List.fromList(_flowerHash)).hashCode,
+        ThumbHashImage(_flower).hashCode,
+        ThumbHashImage(ThumbHash.fromBytes(_flower.bytes)).hashCode,
       );
-      expect(
-        ThumbhashFfiImage.fromBase64(_flower.hashBase64),
-        ThumbhashFfiImage(_flowerHash),
-      );
-      expect(
-        ThumbhashFfiImage(_flowerHash),
-        isNot(ThumbhashFfiImage(_alphaHash)),
-      );
-      expect(
-        ThumbhashFfiImage(_flowerHash),
-        isNot(ThumbhashFfiImage(_flowerHash, decodingWidth: 64)),
-      );
+      expect(ThumbHashImage(_flower), isNot(ThumbHashImage(_alpha)));
+      expect(ThumbHashImage(_flower), isNot(ThumbHashImage(_flower, scale: 2)));
     });
 
     testWidgets('renders the placeholder', (tester) async {
-      final provider = ThumbhashFfiImage(_flowerHash, decodingHeight: 64);
+      final provider = ThumbHashImage(_flower);
       await _precache(tester, provider);
       await tester.pumpWidget(Image(image: provider));
 
       final image = tester.widget<RawImage>(find.byType(RawImage)).image!;
-      expect((image.width, image.height), (46, 64));
+      expect((image.width, image.height), (23, 32));
     });
   });
 
-  group('ThumbhashTheImage', () {
+  group('ThumbHashPreviewImage', () {
     testWidgets('renders the placeholder of an image', (tester) async {
-      final png = await tester.runAsync(() async {
-        final image = await _imageFromPixels(
-          base64Decode(flowerRgbaBase64),
-          flowerWidth,
-          flowerHeight,
-        );
-        final png = await image.toByteData(format: ui.ImageByteFormat.png);
-        image.dispose();
-        return png!.buffer.asUint8List();
-      });
+      final png = await tester.runAsync(_flowerPng);
 
-      final provider = ThumbhashTheImage(MemoryImage(png!));
+      final provider = ThumbHashPreviewImage(MemoryImage(png!));
       await _precache(tester, provider);
       await tester.pumpWidget(Image(image: provider));
 
@@ -211,10 +159,10 @@ void main() {
     });
   });
 
-  group('ThumbhashFfi', () {
+  group('ThumbHashPlaceholder', () {
     testWidgets('shows the average color and the placeholder', (tester) async {
       // Decoding is asynchronous, keep it out of the fake async zone.
-      await _precache(tester, ThumbhashFfiImage(_flowerHash));
+      await _precache(tester, ThumbHashImage(_flower));
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
@@ -222,7 +170,10 @@ void main() {
             child: SizedBox(
               width: 230,
               height: 320,
-              child: ThumbhashFfi(hash: _flowerHash, semanticLabel: 'A flower'),
+              child: ThumbHashPlaceholder(
+                hash: _flower,
+                semanticLabel: 'A flower',
+              ),
             ),
           ),
         ),
@@ -230,17 +181,17 @@ void main() {
 
       expect(
         tester.widget<ColoredBox>(find.byType(ColoredBox)).color,
-        ThumbhashFFI.averageColor(_flowerHash),
+        _flower.averageColor,
       );
       expect(find.bySemanticsLabel('A flower'), findsOneWidget);
       expect(
         tester.widget<Image>(find.byType(Image)).image,
-        ThumbhashFfiImage(_flowerHash),
+        ThumbHashImage(_flower),
       );
     });
 
-    testWidgets('fades in the image', (tester) async {
-      await _precache(tester, ThumbhashFfiImage(_flowerHash));
+    testWidgets('cross-fades to the image', (tester) async {
+      await _precache(tester, ThumbHashImage(_flower));
       final image = await tester.runAsync(
         () => _imageFromPixels(Uint8List(4 * 4 * 4), 4, 4),
       );
@@ -250,7 +201,7 @@ void main() {
         SizedBox(
           width: 100,
           height: 100,
-          child: ThumbhashFfi(hash: _flowerHash, image: provider),
+          child: ThumbHashPlaceholder(hash: _flower, image: provider),
         ),
       );
       List<double> opacities() => [
@@ -270,13 +221,13 @@ void main() {
     });
 
     testWidgets('keeps the placeholder if the image fails', (tester) async {
-      await _precache(tester, ThumbhashFfiImage(_flowerHash));
+      await _precache(tester, ThumbHashImage(_flower));
       final provider = _ControlledImage();
       await tester.pumpWidget(
         SizedBox(
           width: 100,
           height: 100,
-          child: ThumbhashFfi(hash: _flowerHash, image: provider),
+          child: ThumbHashPlaceholder(hash: _flower, image: provider),
         ),
       );
 
@@ -286,17 +237,10 @@ void main() {
       expect(
         find.byWidgetPredicate(
           (widget) =>
-              widget is Image && widget.image == ThumbhashFfiImage(_flowerHash),
+              widget is Image && widget.image == ThumbHashImage(_flower),
         ),
         findsOneWidget,
       );
-    });
-
-    testWidgets('shows nothing for an invalid hash', (tester) async {
-      await tester.pumpWidget(ThumbhashFfi(hash: Uint8List(2)));
-
-      expect(find.byType(Image), findsNothing);
-      expect(tester.takeException(), isNull);
     });
   });
 }

@@ -1,10 +1,10 @@
 ## 1.0.0
 
 * Initial release.
-* C implementation of ThumbHash, ported from the reference Rust
-  implementation, compiled with build hooks for Android, iOS, Linux, macOS
-  and Windows.
-* Pure Dart implementation for the web.
-* `ThumbhashFFI` to encode `ImageProvider`s, `ui.Image`s and RGBA pixels, and
-  to decode hashes to `ui.Image`s or RGBA pixels at any size.
-* `ThumbhashFfiImage`, `ThumbhashTheImage` and the `ThumbhashFfi` widget.
+* Uses the reference Rust implementation of ThumbHash (the `thumbhash`
+  crate), compiled with build hooks for Android, iOS, Linux, macOS and
+  Windows, and an equivalent pure Dart implementation on the web.
+* `ThumbHash`, an immutable, validated value type to encode `ImageProvider`s,
+  `ui.Image`s and RGBA pixels, decode to `ui.Image`s or RGBA pixels, and read
+  the average color and aspect ratio.
+* `ThumbHashPlaceholder`, `ThumbHashImage` and `ThumbHashPreviewImage`.
