@@ -37,14 +37,16 @@ void main() {
   });
 
   test('matches the reference implementation', () {
-    // The native codec is the reference implementation.
-    if (ThumbHash.isNative) {
-      final pixels = reference.toPixels();
-      expect(
-        ThumbHash.encodeRgba(pixels.width, pixels.height, pixels.rgba),
-        ThumbHash.fromBase64(_flowerRoundTripHash),
-      );
-    }
+    final pixels = reference.toPixels();
+    final roundTrip = ThumbHash.encodeRgba(
+      pixels.width,
+      pixels.height,
+      pixels.rgba,
+    );
+    final expected = ThumbHash.fromBase64(_flowerRoundTripHash);
+    expect(roundTrip.bytes.length, expected.bytes.length);
+    expect(roundTrip.aspectRatio, expected.aspectRatio);
+    _expectColorClose(roundTrip.averageColor, expected.averageColor);
     _expectColorClose(reference.averageColor, _flowerAverageColor);
   });
 

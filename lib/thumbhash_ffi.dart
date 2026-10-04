@@ -6,8 +6,9 @@
 /// * [ThumbHashPreviewImage] is an [ImageProvider] that shows the ThumbHash
 ///   placeholder of another image.
 ///
-/// Uses the reference Rust implementation through `dart:ffi`, and an
-/// equivalent Dart implementation on the web.
+/// The codec is a C port of the reference implementation, bound with
+/// `dart:ffi` through build hooks. On the web, an equivalent Dart
+/// implementation is used.
 library;
 
 import 'package:flutter/painting.dart';

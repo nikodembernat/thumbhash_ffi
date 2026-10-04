@@ -11,7 +11,7 @@ void main() {
     expect(ThumbHash.isNative, isTrue);
   });
 
-  test('Dart constants match the Rust crate', () {
+  test('Dart constants match the C header', () {
     expect(cConstants, (
       maxHashLength: ThumbHash.maxLength,
       maxEncodeSize: ThumbHash.maxEncodeSize,

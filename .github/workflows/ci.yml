@@ -44,29 +44,14 @@ jobs:
         run: |
           dart run ffigen --config ffigen.yaml
           git diff --exit-code lib/src/ffi/
+      - name: Compile C sources with warnings as errors
+        run: |
+          for cc in gcc clang; do
+            $cc -std=c11 -O2 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Werror \
+              -fsyntax-only src/thumbhash_ffi.c
+          done
       - name: Check publishability
         run: flutter pub publish --dry-run
-
-  rust:
-    name: Rust crate
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: rust
-    steps:
-      - uses: actions/checkout@v5
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cbindgen
-      # rustup installs the toolchain pinned in rust/rust-toolchain.toml.
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-      - name: Check that the C header is up to date
-        run: |
-          cbindgen --config cbindgen.toml --output thumbhash_ffi.h
-          git diff --exit-code thumbhash_ffi.h
 
   test:
     name: Unit tests (${{ matrix.os }})

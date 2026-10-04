@@ -2,9 +2,9 @@ MIT License
 
 Copyright (c) 2026 Nikodem Bernat
 
-The ThumbHash algorithm and its reference implementation (the thumbhash
-crate, which this package uses) are Copyright (c) 2023 Evan Wallace, also
-under the MIT License.
+The ThumbHash algorithm and the reference implementation that
+src/thumbhash_ffi.c is ported from are Copyright (c) 2023 Evan Wallace,
+also under the MIT License.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

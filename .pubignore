@@ -7,7 +7,6 @@ test/assets/
 
 # Build outputs.
 /build/
-/rust/target/
 .dart_tool/
 .flutter-plugins-dependencies
 /pubspec.lock

@@ -28,9 +28,9 @@ import 'package:thumbhash_ffi/src/hash_header.dart';
 /// )
 /// ```
 ///
-/// On every platform but the web, encoding and decoding use the reference
-/// Rust implementation through `dart:ffi`. On the web, an equivalent Dart
-/// implementation is used instead, see [isNative].
+/// On every platform but the web, encoding and decoding run C code through
+/// `dart:ffi`. On the web, an equivalent Dart implementation is used
+/// instead, see [isNative].
 @immutable
 final class ThumbHash {
   /// Creates a hash from its bytes.

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:thumbhash_ffi/src/ffi/thumbhash_ffi_bindings.g.dart'
     as bindings;
+import 'package:thumbhash_ffi/src/hash_header.dart';
 
 /// Whether the codec is backed by native code.
 const isNativeCodec = true;
@@ -18,7 +19,6 @@ Uint8List encodeRgba(int width, int height, Uint8List rgba) {
     width,
     height,
     rgba.address,
-    rgba.length,
     hash.address,
   );
   _check(length);
@@ -31,50 +31,45 @@ Uint8List encodeRgba(int width, int height, Uint8List rgba) {
   Uint8List hash, {
   required bool premultiplied,
 }) {
-  final rgba = Uint8List(bindings.THUMBHASH_MAX_DECODED_LENGTH);
-  final size = Uint32List(2);
+  final width = Int32List(1);
+  final height = Int32List(1);
+  _check(
+    bindings.thumbhash_decoded_size(
+      hash.address,
+      hash.length,
+      width.address,
+      height.address,
+    ),
+  );
+
+  final [w] = width;
+  final [h] = height;
+  final rgba = Uint8List(w * h * 4);
   _check(
     bindings.thumbhash_decode(
       hash.address,
       hash.length,
-      premultiplied,
+      w,
+      h,
+      premultiplied ? bindings.THUMBHASH_DECODE_PREMULTIPLIED : 0,
       rgba.address,
-      size.address,
     ),
   );
-  final [width, height] = size;
 
-  return (
-    width: width,
-    height: height,
-    rgba: rgba.sublist(0, width * height * 4),
-  );
+  return (width: w, height: h, rgba: rgba);
 }
 
 /// Returns the average color of a valid ThumbHash as (red, green, blue,
 /// alpha) in range [0, 1].
+///
+/// Only reads the header, which is cheaper in Dart than through FFI.
 ({double red, double green, double blue, double alpha}) averageRgba(
   Uint8List hash,
-) {
-  final rgba = Float32List(4);
-  _check(
-    bindings.thumbhash_average_rgba(hash.address, hash.length, rgba.address),
-  );
-  final [red, green, blue, alpha] = rgba;
-
-  return (red: red, green: green, blue: blue, alpha: alpha);
-}
+) => HashHeader.parse(hash).averageRgba;
 
 /// Returns the approximate aspect ratio of a valid ThumbHash.
-double approximateAspectRatio(Uint8List hash) {
-  final ratio = bindings.thumbhash_approximate_aspect_ratio(
-    hash.address,
-    hash.length,
-  );
-  _check(ratio < 0 ? ratio.toInt() : bindings.THUMBHASH_OK);
-
-  return ratio;
-}
+double approximateAspectRatio(Uint8List hash) =>
+    HashHeader.parse(hash).aspectRatio;
 
 /// Hashes are validated before they reach the native code, so any error is
 /// a bug.
@@ -83,8 +78,7 @@ void _check(int result) {
     throw StateError(switch (result) {
       bindings.THUMBHASH_ERROR_INVALID_ARGUMENT => 'Invalid argument.',
       bindings.THUMBHASH_ERROR_INVALID_HASH => 'Invalid ThumbHash.',
-      bindings.THUMBHASH_ERROR_PANIC =>
-        'The ThumbHash implementation panicked.',
+      bindings.THUMBHASH_ERROR_OUT_OF_MEMORY => 'Out of memory.',
       _ => 'Unknown ThumbHash error $result.',
     });
   }

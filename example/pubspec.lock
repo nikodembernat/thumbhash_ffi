@@ -234,14 +234,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.19.0"
-  native_toolchain_rust:
+  native_toolchain_c:
     dependency: transitive
     description:
-      name: native_toolchain_rust
-      sha256: dc8e5f20c0cb7052372bc302f075607086d86354b37199e89ec9d3d35589e519
+      name: native_toolchain_c
+      sha256: "90eaad8059ebc2004a63810a4696ea9acdb02473e47ed3b6b3bafb100ac77e31"
       url: "https://pub.dev"
     source: hosted
-    version: "1.0.7"
+    version: "0.19.5"
   package_config:
     dependency: transitive
     description:
@@ -258,14 +258,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.9.1"
-  petitparser:
-    dependency: transitive
-    description:
-      name: petitparser
-      sha256: "2f1564aadb14215e478563b5406cb80729d022158c01dc50c96013c2f7eb4790"
-      url: "https://pub.dev"
-    source: hosted
-    version: "7.1.0"
   platform:
     dependency: transitive
     description:
@@ -366,14 +358,6 @@ packages:
       relative: true
     source: path
     version: "1.0.0"
-  toml:
-    dependency: transitive
-    description:
-      name: toml
-      sha256: "35a35f782228656a2af31e8c73d1353cc4ef3d683fd68af1111b44631879c05e"
-      url: "https://pub.dev"
-    source: hosted
-    version: "0.18.0"
   typed_data:
     dependency: transitive
     description:
