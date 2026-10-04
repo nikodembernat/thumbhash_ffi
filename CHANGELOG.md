@@ -1,4 +1,4 @@
-## 1.0.0
+## 0.1.0
 
 * Initial release.
 * C port of the reference ThumbHash implementation, compiled with build hooks
