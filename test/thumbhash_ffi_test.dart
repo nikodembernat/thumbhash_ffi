@@ -55,8 +55,19 @@ void main() {
         name: 'Dart codec',
         maxHashDifferences: _maxDartDifferences,
         encode: dart_codec.encodeRgba,
-        decode: (hash, premultiplied) =>
-            dart_codec.decodeRgba(hash, premultiplied: premultiplied),
+        decode: (hash, premultiplied) {
+          final header = HashHeader.parse(hash);
+          final (:width, :height) = header.decodedSize;
+          return (
+            width: width,
+            height: height,
+            rgba: dart_codec.decodeRgba(
+              hash,
+              header,
+              premultiplied: premultiplied,
+            ),
+          );
+        },
       ),
   ];
 

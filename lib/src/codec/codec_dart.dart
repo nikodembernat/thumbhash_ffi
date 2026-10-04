@@ -58,9 +58,8 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
   // Encode using the DCT into DC (constant) and normalized AC (varying) terms.
   final lNx = math.max(lx, 3);
   final lNy = math.max(ly, 3);
-  final minComponents = hasAlpha ? 5 : 3;
-  final cosX = _cosTable(w, math.max(lNx, minComponents));
-  final cosY = _cosTable(h, math.max(lNy, minComponents));
+  final cosX = _cosTable(w, decode: false);
+  final cosY = _cosTable(h, decode: false);
   final rowSums = Float64List(w);
   final lChannel = _encodeChannel(l, w, h, lNx, lNy, cosX, cosY, rowSums);
   final pChannel = _encodeChannel(p, w, h, 3, 3, cosX, cosY, rowSums);
@@ -113,15 +112,16 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
   return hash;
 }
 
-/// Decodes a valid ThumbHash to an RGBA image whose larger side is 32px.
+/// Decodes a valid ThumbHash with the given [header] to an RGBA image of
+/// `header.decodedSize`.
 ///
-/// A pure Dart port of `thumb_hash_to_rgba` from the reference
-/// implementation, used where `dart:ffi` is unavailable.
-({int width, int height, Uint8List rgba}) decodeRgba(
-  Uint8List hash, {
+/// A pure Dart port of `thumbhash_decode` from `src/thumbhash_ffi.c`, used
+/// where `dart:ffi` is unavailable.
+Uint8List decodeRgba(
+  Uint8List hash,
+  HashHeader header, {
   required bool premultiplied,
 }) {
-  final header = HashHeader.parse(hash);
   final HashHeader(:lx, :ly, :hasAlpha) = header;
   final (:width, :height) = header.decodedSize;
 
@@ -147,14 +147,9 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
   final aAc = hasAlpha ? readAc(5, 5, header.aScale) : null;
 
   // Precompute the horizontal basis functions for every column.
-  final nx = math.max(lx, hasAlpha ? 5 : 3);
   final ny = math.max(ly, hasAlpha ? 5 : 3);
-  final cosX = Float64List(nx * width);
-  for (var x = 0; x < width; x++) {
-    for (var cx = 0; cx < nx; cx++) {
-      cosX[x * nx + cx] = math.cos(math.pi / width * (x + 0.5) * cx);
-    }
-  }
+  final cosX = _cosTable(width, decode: true);
+  final cosY = _cosTable(height, decode: true);
 
   final rgba = Uint8List(width * height * 4);
   final cosY2 = Float64List(ny);
@@ -165,7 +160,7 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
   var out = 0;
   for (var y = 0; y < height; y++) {
     for (var cy = 0; cy < ny; cy++) {
-      cosY2[cy] = 2 * math.cos(math.pi / height * (y + 0.5) * cy);
+      cosY2[cy] = 2 * cosY[cy * height + y];
     }
     _collapseRows(lAc, lx, ly, cosY2, lRow);
     _collapseRows(pAc, 3, 3, cosY2, pRow);
@@ -175,29 +170,28 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
     }
 
     for (var x = 0; x < width; x++) {
-      final fx = x * nx;
       var l = header.lDc;
       for (var cx = 0; cx < lx; cx++) {
-        l += lRow[cx] * cosX[fx + cx];
+        l += lRow[cx] * cosX[cx * width + x];
       }
       final p =
           header.pDc +
-          pRow[0] * cosX[fx] +
-          pRow[1] * cosX[fx + 1] +
-          pRow[2] * cosX[fx + 2];
+          pRow[0] * cosX[x] +
+          pRow[1] * cosX[1 * width + x] +
+          pRow[2] * cosX[2 * width + x];
       final q =
           header.qDc +
-          qRow[0] * cosX[fx] +
-          qRow[1] * cosX[fx + 1] +
-          qRow[2] * cosX[fx + 2];
+          qRow[0] * cosX[x] +
+          qRow[1] * cosX[1 * width + x] +
+          qRow[2] * cosX[2 * width + x];
       var a = header.aDc;
       if (hasAlpha) {
         a +=
-            aRow[0] * cosX[fx] +
-            aRow[1] * cosX[fx + 1] +
-            aRow[2] * cosX[fx + 2] +
-            aRow[3] * cosX[fx + 3] +
-            aRow[4] * cosX[fx + 4];
+            aRow[0] * cosX[x] +
+            aRow[1] * cosX[1 * width + x] +
+            aRow[2] * cosX[2 * width + x] +
+            aRow[3] * cosX[3 * width + x] +
+            aRow[4] * cosX[4 * width + x];
       }
 
       // Convert to RGB.
@@ -215,18 +209,8 @@ Uint8List encodeRgba(int w, int h, Uint8List rgba) {
     premultiply(rgba);
   }
 
-  return (width: width, height: height, rgba: rgba);
+  return rgba;
 }
-
-/// Returns the average color of a valid ThumbHash as (red, green, blue,
-/// alpha) in range [0, 1].
-({double red, double green, double blue, double alpha}) averageRgba(
-  Uint8List hash,
-) => HashHeader.parse(hash).averageRgba;
-
-/// Returns the approximate aspect ratio of a valid ThumbHash.
-double approximateAspectRatio(Uint8List hash) =>
-    HashHeader.parse(hash).aspectRatio;
 
 typedef _EncodedChannel = ({double dc, double scale, List<double> ac});
 
@@ -296,16 +280,37 @@ void _collapseRows(
   }
 }
 
-/// Fills `table[c * n + i]` with cos(pi / n * c * (i + 0.5)).
-Float64List _cosTable(int n, int components) {
-  final table = Float64List(n * components);
-  for (var c = 0; c < components; c++) {
-    for (var i = 0; i < n; i++) {
-      table[c * n + i] = math.cos(math.pi / n * c * (i + 0.5));
-    }
+/// The largest number of DCT components along a single axis.
+const _maxComponents = 7;
+
+/// Recently used cosine tables, see [_cosTable].
+final _cosTables = <int, Float64List>{};
+
+/// Returns `table[c * n + i]` = cos(pi / n * c * (i + 0.5)) for c in
+/// [0, 7), with the factors multiplied in the order of the reference
+/// implementation for encoding or decoding (which rounds differently).
+///
+/// Consecutive calls usually have the same sizes, so tables are cached.
+Float64List _cosTable(int n, {required bool decode}) {
+  final key = decode ? -n : n;
+  final cached = _cosTables[key];
+  if (cached != null) {
+    return cached;
   }
 
-  return table;
+  final table = Float64List(_maxComponents * n);
+  for (var c = 0; c < _maxComponents; c++) {
+    for (var i = 0; i < n; i++) {
+      table[c * n + i] = decode
+          ? math.cos(math.pi / n * (i + 0.5) * c)
+          : math.cos(math.pi / n * c * (i + 0.5));
+    }
+  }
+  if (_cosTables.length >= 8) {
+    _cosTables.remove(_cosTables.keys.first);
+  }
+
+  return _cosTables[key] = table;
 }
 
 /// Rounds half away from zero and saturates to [0, max].

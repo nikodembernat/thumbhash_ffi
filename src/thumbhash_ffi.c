@@ -3,9 +3,10 @@
 // https://github.com/evanw/thumbhash/tree/main/rust
 //
 // The arithmetic follows the reference implementation (single precision
-// floats, same quantization), but both the forward and the inverse DCT are
-// evaluated separably with precomputed cosine tables, which is several times
-// faster than evaluating every basis function for every pixel.
+// floats, same order of operations, same quantization), but it is several
+// times faster: both the forward and the inverse DCT are evaluated separably
+// with cached cosine tables, in loops over contiguous memory that the
+// compiler vectorizes, and per-pixel divisions are looked up.
 
 #include "thumbhash_ffi.h"
 
@@ -45,15 +46,73 @@ static inline uint32_t quantize(float v, uint32_t max) {
   return (uint32_t)r;
 }
 
+#if defined(_MSC_VER)
+#define THREAD_LOCAL __declspec(thread)
+#define RESTRICT __restrict
+#else
+#define THREAD_LOCAL _Thread_local
+#define RESTRICT restrict
+#endif
+
+// The reference implementation computes the DCT basis functions with the
+// factors multiplied in a different order when encoding and when decoding,
+// which rounds differently. Both orders are kept, for identical results.
+typedef enum { ENCODE_ORDER, DECODE_ORDER } cos_order;
+
+// The largest axis whose basis functions are cached.
+#define MAX_CACHED_SIZE THUMBHASH_MAX_ENCODE_SIZE
+
+typedef struct {
+  int32_t n;  // 0 if the entry is empty.
+  cos_order order;
+  float table[MAX_COMPONENTS * MAX_CACHED_SIZE];
+} cos_entry;
+
+// Computing the basis functions takes up to a third of the time of a call,
+// and consecutive calls usually have the same sizes. Each thread caches the
+// tables of the last few sizes it used (~11 KB).
+#define COS_CACHE_SIZE 4
+static THREAD_LOCAL cos_entry cos_cache[COS_CACHE_SIZE];
+static THREAD_LOCAL uint32_t cos_cache_next;
+
 // Fills `table[c * n + i]` with cos(pi / n * c * (i + 0.5)) for
-// c in [0, components) and i in [0, n).
-static void fill_cos_table(float *table, int32_t n, int32_t components) {
-  for (int32_t c = 0; c < components; c++) {
+// c in [0, MAX_COMPONENTS) and i in [0, n).
+static void fill_cos_table(float *table, int32_t n, cos_order order) {
+  for (int32_t c = 0; c < MAX_COMPONENTS; c++) {
     for (int32_t i = 0; i < n; i++) {
       table[c * n + i] =
-          cosf(THUMBHASH_PI / (float)n * (float)c * ((float)i + 0.5f));
+          order == ENCODE_ORDER
+              ? cosf(THUMBHASH_PI / (float)n * (float)c * ((float)i + 0.5f))
+              : cosf(THUMBHASH_PI / (float)n * ((float)i + 0.5f) * (float)c);
     }
   }
+}
+
+// Returns the cache entry for an axis of `n` <= MAX_CACHED_SIZE pixels,
+// filling it if needed without evicting `keep`.
+static const cos_entry *cos_entry_for(int32_t n, cos_order order,
+                                      const cos_entry *keep) {
+  for (int32_t i = 0; i < COS_CACHE_SIZE; i++) {
+    if (cos_cache[i].n == n && cos_cache[i].order == order) {
+      return &cos_cache[i];
+    }
+  }
+  cos_entry *entry = &cos_cache[cos_cache_next++ % COS_CACHE_SIZE];
+  if (entry == keep) entry = &cos_cache[cos_cache_next++ % COS_CACHE_SIZE];
+  fill_cos_table(entry->table, n, order);
+  entry->n = n;
+  entry->order = order;
+  return entry;
+}
+
+// Returns the basis functions for both axes of an image whose sides are at
+// most MAX_CACHED_SIZE pixels.
+static void cos_tables(int32_t w, int32_t h, cos_order order,
+                       const float **cos_x, const float **cos_y) {
+  const cos_entry *x = cos_entry_for(w, order, NULL);
+  const cos_entry *y = cos_entry_for(h, order, x);
+  *cos_x = x->table;
+  *cos_y = y->table;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,14 +126,25 @@ typedef struct {
   float ac[MAX_L_AC];
 } encoded_channel;
 
-// Encodes `channel` using the DCT into DC (constant) and normalized AC
-// (varying) terms. Only the components with `cx * ny < nx * (ny - cy)` are
-// kept, which is a triangle in the frequency domain.
-//
-// `row_sums` must have room for `w` floats.
-static void encode_channel(const float *channel, int32_t w, int32_t h,
-                           int32_t nx, int32_t ny, const float *cos_x,
-                           const float *cos_y, float *row_sums,
+// Accumulates one row of a channel into the vertical sums of the DCT:
+// `sums[cy * w + x] += row[x] * cos_y[cy * h + y]` for each cy.
+static inline void accumulate_row(const float *RESTRICT row, int32_t w,
+                                  int32_t h, int32_t y, int32_t ny,
+                                  const float *RESTRICT cos_y,
+                                  float *RESTRICT sums) {
+  for (int32_t cy = 0; cy < ny; cy++) {
+    const float f = cos_y[cy * h + y];
+    float *RESTRICT sum = sums + cy * w;
+    for (int32_t x = 0; x < w; x++) sum[x] += row[x] * f;
+  }
+}
+
+// Finishes the DCT of a channel from its vertical sums: DC (constant) and
+// normalized AC (varying) terms. Only the components with
+// `cx * ny < nx * (ny - cy)` are kept, which is a triangle in the frequency
+// domain.
+static void encode_channel(const float *sums, int32_t w, int32_t h, int32_t nx,
+                           int32_t ny, const float *cos_x,
                            encoded_channel *out) {
   const float inv_area = 1.0f / (float)(w * h);
   out->dc = 0.0f;
@@ -82,27 +152,27 @@ static void encode_channel(const float *channel, int32_t w, int32_t h,
   out->ac_count = 0;
 
   for (int32_t cy = 0; cy < ny; cy++) {
-    // Collapse the rows with the vertical basis function first...
-    const float *fy = cos_y + cy * h;
-    for (int32_t x = 0; x < w; x++) row_sums[x] = 0.0f;
-    for (int32_t y = 0; y < h; y++) {
-      const float *row = channel + y * w;
-      const float f = fy[y];
-      for (int32_t x = 0; x < w; x++) row_sums[x] += row[x] * f;
+    const float *sum = sums + cy * w;
+    int32_t count = 0;
+    while (count * ny < nx * (ny - cy)) count++;
+
+    // Each coefficient is a sum over the columns. Accumulate all of them in
+    // the same pass, so that the additions of different coefficients overlap
+    // instead of waiting for each other.
+    float f[MAX_COMPONENTS] = {0};
+    for (int32_t x = 0; x < w; x++) {
+      const float v = sum[x];
+      for (int32_t cx = 0; cx < count; cx++) f[cx] += v * cos_x[cx * w + x];
     }
 
-    // ...then apply each horizontal basis function to the collapsed row.
-    for (int32_t cx = 0; cx * ny < nx * (ny - cy); cx++) {
-      const float *fx = cos_x + cx * w;
-      float f = 0.0f;
-      for (int32_t x = 0; x < w; x++) f += row_sums[x] * fx[x];
-      f *= inv_area;
+    for (int32_t cx = 0; cx < count; cx++) {
+      f[cx] *= inv_area;
       if (cx > 0 || cy > 0) {
-        out->ac[out->ac_count++] = f;
-        const float magnitude = fabsf(f);
+        out->ac[out->ac_count++] = f[cx];
+        const float magnitude = fabsf(f[cx]);
         if (magnitude > out->scale) out->scale = magnitude;
       } else {
-        out->dc = f;
+        out->dc = f[cx];
       }
     }
   }
@@ -141,23 +211,41 @@ int32_t thumbhash_encode(int32_t w, int32_t h, const uint8_t *rgba,
   }
   const int32_t n = w * h;
 
-  // Determine the average color.
-  float avg_r = 0.0f, avg_g = 0.0f, avg_b = 0.0f, avg_a = 0.0f;
-  for (int32_t i = 0; i < n; i++) {
-    const uint8_t *px = rgba + i * 4;
-    const float alpha = (float)px[3] / 255.0f;
-    avg_r += alpha / 255.0f * (float)px[0];
-    avg_g += alpha / 255.0f * (float)px[1];
-    avg_b += alpha / 255.0f * (float)px[2];
-    avg_a += alpha;
-  }
-  if (avg_a > 0.0f) {
-    avg_r /= avg_a;
-    avg_g /= avg_a;
-    avg_b /= avg_a;
+  // Divisions are slow, so look up the per-pixel factors of the reference
+  // implementation, computed exactly like it does: alpha = a / 255,
+  // weight = alpha / 255 and inverse = 1 - alpha.
+  float alpha_of[256], weight_of[256], inverse_of[256];
+  for (int32_t i = 0; i < 256; i++) {
+    alpha_of[i] = (float)i / 255.0f;
+    weight_of[i] = alpha_of[i] / 255.0f;
+    inverse_of[i] = 1.0f - alpha_of[i];
   }
 
-  const bool has_alpha = avg_a < (float)n;
+  // Determine the average color. Transparent pixels are composited atop it,
+  // so it does not matter for opaque images (it is multiplied by zero): skip
+  // it for them, after a quick check that vectorizes. Otherwise, sum like
+  // the reference, one pixel after the other.
+  uint32_t sum_a = 0;
+  for (int32_t i = 0; i < n; i++) sum_a += rgba[i * 4 + 3];
+  const bool has_alpha = sum_a < 255u * (uint32_t)n;
+  float avg_r = 0.0f, avg_g = 0.0f, avg_b = 0.0f;
+  if (has_alpha) {
+    float avg_a = 0.0f;
+    for (int32_t i = 0; i < n; i++) {
+      const uint8_t *px = rgba + i * 4;
+      const float weight = weight_of[px[3]];
+      avg_r += weight * (float)px[0];
+      avg_g += weight * (float)px[1];
+      avg_b += weight * (float)px[2];
+      avg_a += alpha_of[px[3]];
+    }
+    if (avg_a > 0.0f) {
+      avg_r /= avg_a;
+      avg_g /= avg_a;
+      avg_b /= avg_a;
+    }
+  }
+
   // Use fewer luminance bits if there's alpha.
   const int32_t l_limit = has_alpha ? 5 : 7;
   const int32_t max_side = max_i32(w, h);
@@ -165,49 +253,53 @@ int32_t thumbhash_encode(int32_t w, int32_t h, const uint8_t *rgba,
       max_i32(1, (int32_t)roundf((float)(l_limit * w) / (float)max_side));
   const int32_t ly =
       max_i32(1, (int32_t)roundf((float)(l_limit * h) / (float)max_side));
-
-  // One allocation for the LPQA channels, the cosine tables and a scratch
-  // row: at most 4 * 100 * 100 + 7 * 100 * 2 + 100 floats (~163 KB), which
-  // is too much for the stack of some threads.
-  float *buffer = (float *)malloc(
-      sizeof(float) * (size_t)(4 * n + MAX_COMPONENTS * (w + h) + w));
-  if (buffer == NULL) return THUMBHASH_ERROR_OUT_OF_MEMORY;
-  float *l = buffer;   // luminance
-  float *p = l + n;    // yellow - blue
-  float *q = p + n;    // red - green
-  float *a = q + n;    // alpha
-  float *cos_x = a + n;
-  float *cos_y = cos_x + MAX_COMPONENTS * w;
-  float *row_sums = cos_y + MAX_COMPONENTS * h;
-
-  // Convert the image from RGBA to LPQA (composite atop the average color).
-  for (int32_t i = 0; i < n; i++) {
-    const uint8_t *px = rgba + i * 4;
-    const float alpha = (float)px[3] / 255.0f;
-    const float r = avg_r * (1.0f - alpha) + alpha / 255.0f * (float)px[0];
-    const float g = avg_g * (1.0f - alpha) + alpha / 255.0f * (float)px[1];
-    const float b = avg_b * (1.0f - alpha) + alpha / 255.0f * (float)px[2];
-    l[i] = (r + g + b) / 3.0f;
-    p[i] = (r + g) / 2.0f - b;
-    q[i] = r - g;
-    a[i] = alpha;
-  }
-
-  // Encode using the DCT into DC (constant) and normalized AC (varying) terms.
   const int32_t l_nx = max_i32(lx, 3);
   const int32_t l_ny = max_i32(ly, 3);
-  const int32_t min_components = has_alpha ? 5 : 3;
-  fill_cos_table(cos_x, w, max_i32(l_nx, min_components));
-  fill_cos_table(cos_y, h, max_i32(l_ny, min_components));
+  const int32_t a_n = has_alpha ? 5 : 0;
 
-  encoded_channel l_ch, p_ch, q_ch, a_ch;
-  encode_channel(l, w, h, l_nx, l_ny, cos_x, cos_y, row_sums, &l_ch);
-  encode_channel(p, w, h, 3, 3, cos_x, cos_y, row_sums, &p_ch);
-  encode_channel(q, w, h, 3, 3, cos_x, cos_y, row_sums, &q_ch);
-  if (has_alpha) {
-    encode_channel(a, w, h, 5, 5, cos_x, cos_y, row_sums, &a_ch);
+  // One row of each LPQA channel and the vertical sums of the DCT:
+  // (4 + 7 + 3 + 3 + 5) * 100 floats at most (~9 KB).
+  float buffer[(4 + MAX_COMPONENTS + 3 + 3 + 5) * THUMBHASH_MAX_ENCODE_SIZE];
+  float *l_row = buffer;     // luminance
+  float *p_row = l_row + w;  // yellow - blue
+  float *q_row = p_row + w;  // red - green
+  float *a_row = q_row + w;  // alpha
+  float *l_sums = a_row + w;
+  float *p_sums = l_sums + l_ny * w;
+  float *q_sums = p_sums + 3 * w;
+  float *a_sums = q_sums + 3 * w;
+  for (float *sum = l_sums; sum < a_sums + a_n * w; sum++) *sum = 0.0f;
+
+  const float *cos_x, *cos_y;
+  cos_tables(w, h, ENCODE_ORDER, &cos_x, &cos_y);
+
+  // Convert the image from RGBA to LPQA (composite atop the average color)
+  // row by row, and collapse the rows with the vertical basis functions...
+  for (int32_t y = 0; y < h; y++) {
+    const uint8_t *px = rgba + y * w * 4;
+    for (int32_t x = 0; x < w; x++, px += 4) {
+      const float weight = weight_of[px[3]];
+      const float inverse = inverse_of[px[3]];
+      const float r = avg_r * inverse + weight * (float)px[0];
+      const float g = avg_g * inverse + weight * (float)px[1];
+      const float b = avg_b * inverse + weight * (float)px[2];
+      l_row[x] = (r + g + b) / 3.0f;
+      p_row[x] = (r + g) / 2.0f - b;
+      q_row[x] = r - g;
+      a_row[x] = alpha_of[px[3]];
+    }
+    accumulate_row(l_row, w, h, y, l_ny, cos_y, l_sums);
+    accumulate_row(p_row, w, h, y, 3, cos_y, p_sums);
+    accumulate_row(q_row, w, h, y, 3, cos_y, q_sums);
+    accumulate_row(a_row, w, h, y, a_n, cos_y, a_sums);
   }
-  free(buffer);
+
+  // ...then apply the horizontal basis functions.
+  encoded_channel l_ch, p_ch, q_ch, a_ch;
+  encode_channel(l_sums, w, h, l_nx, l_ny, cos_x, &l_ch);
+  encode_channel(p_sums, w, h, 3, 3, cos_x, &p_ch);
+  encode_channel(q_sums, w, h, 3, 3, cos_x, &q_ch);
+  if (has_alpha) encode_channel(a_sums, w, h, 5, 5, cos_x, &a_ch);
 
   // Write the constants.
   const bool is_landscape = w > h;
@@ -266,8 +358,8 @@ static int32_t ac_count(int32_t nx, int32_t ny) {
 static int32_t read_header(const uint8_t *hash, int32_t hash_length,
                            header *out) {
   if (hash == NULL || hash_length < 5) return THUMBHASH_ERROR_INVALID_HASH;
-  const uint32_t header24 = (uint32_t)hash[0] | ((uint32_t)hash[1] << 8) |
-                            ((uint32_t)hash[2] << 16);
+  const uint32_t header24 =
+      (uint32_t)hash[0] | ((uint32_t)hash[1] << 8) | ((uint32_t)hash[2] << 16);
   const uint32_t header16 = (uint32_t)hash[3] | ((uint32_t)hash[4] << 8);
   out->l_dc = (float)(header24 & 63) / 63.0f;
   out->p_dc = (float)((header24 >> 6) & 63) / 31.5f - 1.0f;
@@ -293,8 +385,8 @@ static int32_t read_header(const uint8_t *hash, int32_t hash_length,
     out->a_scale = 1.0f;
   }
 
-  const int32_t nibbles = ac_count(out->lx, out->ly) + 2 * PQ_AC +
-                          (out->has_alpha ? A_AC : 0);
+  const int32_t nibbles =
+      ac_count(out->lx, out->ly) + 2 * PQ_AC + (out->has_alpha ? A_AC : 0);
   out->length = out->ac_start + (nibbles + 1) / 2;
   return hash_length < out->length ? THUMBHASH_ERROR_INVALID_HASH : 0;
 }
@@ -350,7 +442,21 @@ static inline void collapse_rows(const float *ac, int32_t nx, int32_t ny,
   }
 }
 
-static inline uint8_t to_byte(float v) { return (uint8_t)(clamp01(v) * 255.0f); }
+// Adds `sum(coefficients[c] * cos_x[c * w + x])` over c to `out[x]`, in
+// order of increasing c, for every column x of a row.
+static inline void apply_columns(const float *RESTRICT coefficients,
+                                 int32_t count, const float *RESTRICT cos_x,
+                                 int32_t w, float *RESTRICT out) {
+  for (int32_t c = 0; c < count; c++) {
+    const float f = coefficients[c];
+    const float *RESTRICT fx = cos_x + c * w;
+    for (int32_t x = 0; x < w; x++) out[x] += f * fx[x];
+  }
+}
+
+static inline void fill(float *out, int32_t n, float value) {
+  for (int32_t i = 0; i < n; i++) out[i] = value;
+}
 
 int32_t thumbhash_decode(const uint8_t *hash, int32_t hash_length,
                          int32_t width, int32_t height, uint32_t flags,
@@ -372,67 +478,98 @@ int32_t thumbhash_decode(const uint8_t *hash, int32_t hash_length,
   read_ac(&reader, 3, 3, hd.q_scale * 1.25f, q_ac);
   if (hd.has_alpha) read_ac(&reader, 5, 5, hd.a_scale, a_ac);
 
-  // Precompute the horizontal basis functions for every column.
-  const int32_t nx = max_i32(hd.lx, hd.has_alpha ? 5 : 3);
-  const int32_t ny = max_i32(hd.ly, hd.has_alpha ? 5 : 3);
-  float *cos_x = (float *)malloc(sizeof(float) * (size_t)(nx * width));
-  if (cos_x == NULL) return THUMBHASH_ERROR_OUT_OF_MEMORY;
-  for (int32_t x = 0; x < width; x++) {
-    for (int32_t cx = 0; cx < nx; cx++) {
-      cos_x[x * nx + cx] =
-          cosf(THUMBHASH_PI / (float)width * ((float)x + 0.5f) * (float)cx);
-    }
+  // The basis functions for every column (`cos_x[cx * w + x]`) and row, and
+  // one row of each LPQA channel. Rows are computed a channel and a
+  // component at a time, so that the inner loops run over contiguous
+  // columns and vectorize.
+  const bool cached = width <= MAX_CACHED_SIZE && height <= MAX_CACHED_SIZE;
+  const size_t buffer_size =
+      (size_t)(7 * width) +
+      (cached ? 0 : (size_t)(MAX_COMPONENTS * (width + height)));
+  float stack_buffer[7 * 64];
+  float *buffer = buffer_size <= sizeof stack_buffer / sizeof(float)
+                      ? stack_buffer
+                      : (float *)malloc(sizeof(float) * buffer_size);
+  if (buffer == NULL) return THUMBHASH_ERROR_OUT_OF_MEMORY;
+  float *l = buffer;
+  float *p = l + width;
+  float *q = p + width;
+  float *a = q + width;
+  float *r = a + width;
+  float *g = r + width;
+  float *b = g + width;
+  const float *cos_x, *cos_y;
+  if (cached) {
+    cos_tables(width, height, DECODE_ORDER, &cos_x, &cos_y);
+  } else {
+    float *tables = b + width;
+    fill_cos_table(tables, width, DECODE_ORDER);
+    fill_cos_table(tables + MAX_COMPONENTS * width, height, DECODE_ORDER);
+    cos_x = tables;
+    cos_y = tables + MAX_COMPONENTS * width;
   }
 
   const bool premultiply = (flags & THUMBHASH_DECODE_PREMULTIPLIED) != 0;
+  const int32_t ny = max_i32(hd.ly, hd.has_alpha ? 5 : 3);
   float cos_y2[MAX_COMPONENTS];
   float l_row[MAX_COMPONENTS], p_row[3], q_row[3], a_row[5];
   uint8_t *out = rgba;
   for (int32_t y = 0; y < height; y++) {
     for (int32_t cy = 0; cy < ny; cy++) {
-      cos_y2[cy] =
-          2.0f * cosf(THUMBHASH_PI / (float)height * ((float)y + 0.5f) *
-                      (float)cy);
+      cos_y2[cy] = 2.0f * cos_y[cy * height + y];
     }
     collapse_rows(l_ac, hd.lx, hd.ly, cos_y2, l_row);
     collapse_rows(p_ac, 3, 3, cos_y2, p_row);
     collapse_rows(q_ac, 3, 3, cos_y2, q_row);
-    if (hd.has_alpha) collapse_rows(a_ac, 5, 5, cos_y2, a_row);
 
+    fill(l, width, hd.l_dc);
+    fill(p, width, hd.p_dc);
+    fill(q, width, hd.q_dc);
+    apply_columns(l_row, hd.lx, cos_x, width, l);
+    apply_columns(p_row, 3, cos_x, width, p);
+    apply_columns(q_row, 3, cos_x, width, q);
+    if (hd.has_alpha) {
+      // The alpha terms are summed before adding the DC.
+      collapse_rows(a_ac, 5, 5, cos_y2, a_row);
+      fill(a, width, 0.0f);
+      apply_columns(a_row, 5, cos_x, width, a);
+      for (int32_t x = 0; x < width; x++) {
+        a[x] = clamp01(hd.a_dc + a[x]) * 255.0f;
+      }
+    } else {
+      fill(a, width, clamp01(hd.a_dc) * 255.0f);
+    }
+
+    // Convert to RGB, in a loop that vectorizes...
     for (int32_t x = 0; x < width; x++) {
-      const float *fx = cos_x + x * nx;
-      float l = hd.l_dc;
-      for (int32_t cx = 0; cx < hd.lx; cx++) l += l_row[cx] * fx[cx];
-      const float p = hd.p_dc + p_row[0] * fx[0] + p_row[1] * fx[1] +
-                      p_row[2] * fx[2];
-      const float q = hd.q_dc + q_row[0] * fx[0] + q_row[1] * fx[1] +
-                      q_row[2] * fx[2];
-      float a = hd.a_dc;
-      if (hd.has_alpha) {
-        a += a_row[0] * fx[0] + a_row[1] * fx[1] + a_row[2] * fx[2] +
-             a_row[3] * fx[3] + a_row[4] * fx[4];
-      }
-
-      // Convert to RGB.
-      const float b = l - 2.0f / 3.0f * p;
-      const float r = (3.0f * l - b + q) / 2.0f;
-      const float g = r - q;
-      out[0] = to_byte(r);
-      out[1] = to_byte(g);
-      out[2] = to_byte(b);
-      out[3] = to_byte(a);
-      if (premultiply) {
-        // Premultiply the bytes (rounding to nearest), so that both outputs
-        // agree, like the Dart implementation.
-        const uint32_t alpha = out[3];
-        for (int c = 0; c < 3; c++) {
-          out[c] = (uint8_t)(((uint32_t)out[c] * alpha + 127) / 255);
-        }
-      }
-      out += 4;
+      const float bx = l[x] - 2.0f / 3.0f * p[x];
+      const float rx = (3.0f * l[x] - bx + q[x]) / 2.0f;
+      const float gx = rx - q[x];
+      r[x] = clamp01(rx) * 255.0f;
+      g[x] = clamp01(gx) * 255.0f;
+      b[x] = clamp01(bx) * 255.0f;
+    }
+    // ...then interleave the bytes.
+    for (int32_t x = 0; x < width; x++, out += 4) {
+      out[0] = (uint8_t)r[x];
+      out[1] = (uint8_t)g[x];
+      out[2] = (uint8_t)b[x];
+      out[3] = (uint8_t)a[x];
     }
   }
 
-  free(cos_x);
+  if (premultiply) {
+    // Premultiply the bytes (rounding to nearest), so that both outputs
+    // agree, like the Dart implementation.
+    const int32_t n = width * height * 4;
+    for (int32_t i = 0; i < n; i += 4) {
+      const uint32_t alpha = rgba[i + 3];
+      rgba[i] = (uint8_t)(((uint32_t)rgba[i] * alpha + 127) / 255);
+      rgba[i + 1] = (uint8_t)(((uint32_t)rgba[i + 1] * alpha + 127) / 255);
+      rgba[i + 2] = (uint8_t)(((uint32_t)rgba[i + 2] * alpha + 127) / 255);
+    }
+  }
+
+  if (buffer != stack_buffer) free(buffer);
   return 0;
 }

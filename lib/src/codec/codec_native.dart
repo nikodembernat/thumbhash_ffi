@@ -26,50 +26,28 @@ Uint8List encodeRgba(int width, int height, Uint8List rgba) {
   return hash.sublist(0, length);
 }
 
-/// Decodes a valid ThumbHash to an RGBA image whose larger side is 32px.
-({int width, int height, Uint8List rgba}) decodeRgba(
-  Uint8List hash, {
+/// Decodes a valid ThumbHash with the given [header] to an RGBA image of
+/// `header.decodedSize`.
+Uint8List decodeRgba(
+  Uint8List hash,
+  HashHeader header, {
   required bool premultiplied,
 }) {
-  final width = Int32List(1);
-  final height = Int32List(1);
-  _check(
-    bindings.thumbhash_decoded_size(
-      hash.address,
-      hash.length,
-      width.address,
-      height.address,
-    ),
-  );
-
-  final [w] = width;
-  final [h] = height;
-  final rgba = Uint8List(w * h * 4);
+  final (:width, :height) = header.decodedSize;
+  final rgba = Uint8List(width * height * 4);
   _check(
     bindings.thumbhash_decode(
       hash.address,
       hash.length,
-      w,
-      h,
+      width,
+      height,
       premultiplied ? bindings.THUMBHASH_DECODE_PREMULTIPLIED : 0,
       rgba.address,
     ),
   );
 
-  return (width: w, height: h, rgba: rgba);
+  return rgba;
 }
-
-/// Returns the average color of a valid ThumbHash as (red, green, blue,
-/// alpha) in range [0, 1].
-///
-/// Only reads the header, which is cheaper in Dart than through FFI.
-({double red, double green, double blue, double alpha}) averageRgba(
-  Uint8List hash,
-) => HashHeader.parse(hash).averageRgba;
-
-/// Returns the approximate aspect ratio of a valid ThumbHash.
-double approximateAspectRatio(Uint8List hash) =>
-    HashHeader.parse(hash).aspectRatio;
 
 /// Hashes are validated before they reach the native code, so any error is
 /// a bug.

@@ -12,7 +12,8 @@
 #if defined(_WIN32)
 #define THUMBHASH_EXPORT __declspec(dllexport)
 #else
-#define THUMBHASH_EXPORT __attribute__((visibility("default"))) __attribute__((used))
+#define THUMBHASH_EXPORT \
+  __attribute__((visibility("default"))) __attribute__((used))
 #endif
 
 #ifdef __cplusplus

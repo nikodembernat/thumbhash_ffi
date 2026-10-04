@@ -75,7 +75,7 @@ final class ThumbHash {
     return ThumbHash._(codec.encodeRgba(width, height, rgba));
   }
 
-  const ThumbHash._(this._bytes);
+  ThumbHash._(this._bytes);
 
   /// The maximum width and height of an image accepted by [ThumbHash.encodeRgba].
   static const maxEncodeSize = 100;
@@ -151,24 +151,27 @@ final class ThumbHash {
 
   final Uint8List _bytes;
 
+  /// Parsed on first use: the bytes are always valid.
+  late final HashHeader _header = HashHeader.parse(_bytes);
+
   /// The bytes of the hash, which cannot be modified.
   Uint8List get bytes => _bytes.asUnmodifiableView();
 
   /// Whether the original image has transparent pixels.
-  bool get hasAlpha => (_bytes[2] & 0x80) != 0;
+  bool get hasAlpha => _header.hasAlpha;
 
   /// The approximate aspect ratio (width / height) of the original image.
   ///
   /// Useful to size the placeholder, e.g. with an `AspectRatio` widget.
-  double get aspectRatio => codec.approximateAspectRatio(_bytes);
+  double get aspectRatio => _header.aspectRatio;
 
   /// The average color of the image, which is a good background to show
   /// before the placeholder is decoded.
-  Color get averageColor {
-    final (:red, :green, :blue, :alpha) = codec.averageRgba(_bytes);
+  late final Color averageColor = () {
+    final (:red, :green, :blue, :alpha) = _header.averageRgba;
 
     return Color.from(alpha: alpha, red: red, green: green, blue: blue);
-  }
+  }();
 
   /// Returns the base64 encoding of the hash, the usual way to store it.
   String toBase64() => base64.encode(_bytes);
@@ -182,15 +185,12 @@ final class ThumbHash {
   ///
   /// Runs synchronously and takes a few microseconds.
   ThumbHashPixels toPixels({bool premultiplied = false}) {
-    final (:width, :height, :rgba) = codec.decodeRgba(
-      _bytes,
-      premultiplied: premultiplied,
-    );
+    final (:width, :height) = _header.decodedSize;
 
     return ThumbHashPixels._(
       width: width,
       height: height,
-      rgba: rgba,
+      rgba: codec.decodeRgba(_bytes, _header, premultiplied: premultiplied),
       premultiplied: premultiplied,
     );
   }

@@ -134,16 +134,30 @@ these changes:
 
 ## Performance
 
-Encoding a 100x100 image takes about 60 µs and decoding a placeholder about
-10 µs on a laptop-class CPU, so the synchronous methods are safe to call on
-the UI isolate. The C code follows the reference implementation (single
-precision, same quantization), but evaluates the forward and inverse DCT
-separably with precomputed cosine tables, which is several times faster than
-the reference. Typed data is passed to C without copying, through leaf calls.
+On a 2.1 GHz x64 server core, in a release build, encoding a 100x100 image
+takes about 35 µs and decoding a placeholder about 4–6 µs, so the
+synchronous methods are safe to call on the UI isolate. That is about 30
+times (encoding) and 8 times (decoding) faster than the reference Rust
+implementation, and 3–9 times faster than pure Dart implementations. How:
 
-Hashes match the reference byte for byte in most cases; when an intermediate
-value lands right on a rounding boundary, a coefficient may differ by one
-step, which is not visible.
+- The forward and inverse DCT are evaluated separably, a channel and a
+  component at a time, so the inner loops run over contiguous memory and
+  the compiler vectorizes them.
+- The cosine tables of the last few image sizes are cached per thread.
+- Per-pixel divisions are replaced by lookup tables, and the average color
+  (only needed for transparent images) is skipped for opaque ones.
+- Typed data is passed to C without copying, through leaf calls, and the
+  header of a `ThumbHash` (average color, aspect ratio) is parsed once.
+
+The C code otherwise follows the reference implementation: single precision,
+the same order of operations and the same quantization. Hashes match the
+reference byte for byte in most cases; when an intermediate value lands right
+on a rounding boundary, a coefficient may differ by one step, which is not
+visible.
+
+Turning a hash into a `ui.Image` is dominated by the engine (creating and
+uploading the image), so `ThumbHashImage`s are cached by the image cache like
+any other image.
 
 ## How it works
 
